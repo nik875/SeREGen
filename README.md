@@ -1,6 +1,6 @@
 # SeqRep
 
-**This tool is still in active development.** Install all requirements with `pip install -r requirements.txt`. Requirements file is not clean and may contain unnecessary or outdated packages.
+**This tool is still in active development.** Install all requirements in a fresh Python virtual environment running Python 3.10 or greater using `pip install jupyter tensorflow kpal pandas matplotlib`. Requirements file is not clean and may contain unnecessary or outdated packages.
 
 SeqRep is a DNA dataset visualization and sequence representation tool available as a Python package. This is a computationally intensive analysis methodology, and best results are achieved when running on a modern computer with multiple CPU cores and a powerful GPU. The central idea is to train a machine learning model to convert individual DNA sequences into n-dimensional points, such that the distances between any two points in space is correlated with the true dissimilarity of those points' parent DNA sequences.
 
@@ -15,8 +15,6 @@ Inside the SeqRep library are six modules:
         + Builds on top of the pandas DataFrame to allow easy importing of FASTA data, parsing out of taxonomic information, and dataset filtering.
         + Taxonomic information can be added after object creation if the source is something other than the FASTA headers.
         + Integrates with visualization module to simplify plot generation.
-- output_mgmt.py
-    * An internal utils module that helps manage output.
 - comparative_encoder.py
     * ComparativeEncoder
         + Converts a TensorFlow encoder model into a comparative encoder model. Takes a Distance object as an argument.
@@ -32,6 +30,6 @@ Inside the SeqRep library are six modules:
     * repr_scatterplot
         + The most basic scatterplot function that wraps matplotlib and plots a scatterplot of sequence representations.
     * reprs_by_taxa
-        + An incredibly useful function that can filter down input arrays with a boolean mask and plot all points in each value of a given taxonomic level, colored by taxonomic classification.
+        + An incredibly useful function that can filter down input arrays with a boolean mask and plot all points in each value of a given taxonomic level, colored by taxonomic classification. Takes arguments as: (sequence representations, Dataset object, string taxonomic level to target, plot title, alpha: optional alpha value for points, filter: optional minimum number of sequences in a taxa for that taxa to be plotted, savepath: optional save path for the generated figure, mask: optional boolean mask to apply before plotting).
 
 Many of these files have reasonable internal documentation, so it's worth looking at that for assistance as well.
