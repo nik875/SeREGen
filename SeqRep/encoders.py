@@ -82,7 +82,7 @@ class ModelBuilder:
         for _ in range(depth):
             self.current = tf.keras.layers.Dense(size, activation=activation, **kwargs)(self.current)
     
-    def conv1D(self, filters: int, kernel_size: int, divide=None, **kwargs):
+    def conv1D(self, filters: int, kernel_size: int, output_dim: int, divide=None, expand=True, **kwargs):
         """
         Add a convolutional layer. Output passes through feed forward network with size specified by filters.
         @param filters: output size of the layer.
@@ -91,17 +91,18 @@ class ModelBuilder:
         Additional keyword arguments are passed to TensorFlow Conv1D layer constructor.
         """
         orig_shape = tuple(self.current.shape)[1:]
-        if divide:
-            self.reshape((*orig_shape[:-1], orig_shape[-1] // divide, divide))
-        else:
-            self.reshape((*orig_shape, 1))
+        if expand:
+            if divide:
+                self.reshape((*orig_shape[:-1], orig_shape[-1] // divide, divide))
+            else:
+                self.reshape((*orig_shape, 1))
         self.current = tf.keras.layers.Conv1D(filters, kernel_size, **kwargs)(self.current)
         self.current = tf.keras.layers.MaxPooling1D()(self.current)
         self.current = tf.keras.layers.Flatten()(self.current)  # Removes extra dimension from shape
         self.current = tf.keras.layers.BatchNormalization()(self.current)
-        self.dense(filters)
+        self.dense(output_dim)
     
-    def attention(self, embed_dim: int, num_heads: int, output_dim: int, divide=False, rate=.1):
+    def attention(self, embed_dim: int, num_heads: int, output_dim: int, divide=False, expand=True, rate=.1):
         """
         Add an attention layer.
         @param embed_dim: Desired embedding dimension size. New dimension will be created to accomodate.
@@ -111,10 +112,11 @@ class ModelBuilder:
         @param rate: Learning rate for AttentionBlock.
         """
         shape = tuple(self.current.shape[1:])
-        if divide:
-            self.reshape((*shape[:-1], shape[-1] // embed_dim, embed_dim))
-        else:
-            self.dense(shape[-1] * embed_dim)
-            self.reshape((*shape[:-1], shape[-1], embed_dim))
+        if expand:
+            if divide:
+                self.reshape((*shape[:-1], shape[-1] // embed_dim, embed_dim))
+            else:
+                self.dense(shape[-1] * embed_dim)
+                self.reshape((*shape[:-1], shape[-1], embed_dim))
         self.current = AttentionBlock(embed_dim, num_heads, output_dim, rate=rate)(self.current)
         self.current = tf.keras.layers.BatchNormalization()(self.current)

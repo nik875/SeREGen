@@ -2,6 +2,7 @@ import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
 from kpal.metrics import euclidean
+from Bio import pairwise2
 
 
 class Distance:
@@ -32,6 +33,14 @@ class Distance:
         @return int: distance value
         """
         return 0
+    
+    def postprocessor(self, data: np.ndarray) -> np.ndarray:
+        """
+        Postprocess a full array of distances. Does nothing by default.
+        @param data: np.ndarray
+        @return np.ndarray
+        """
+        return data
 
 
 class Euclidean(Distance):
@@ -86,4 +95,34 @@ class Euclidean(Distance):
         assert self.mean != -1 or self.std != -1 or self.min_val != -1  # TODO: CREATE BETTER ERROR
         zscore = (euclidean(*pair) - self.mean) / self.std
         return zscore - self.min_val
-        # return min([self.max_zscore_dev, max([-1 * self.max_zscore_dev, zscore])]) - self.min_val
+
+
+class Alignment(Distance):
+    """
+    Normalized alignment distance between two textual DNA sequences. Sequences must
+    all have equal lengths.
+    """
+    def fit(self, data):
+        """
+        Fits the distance metric to a given dataset. Uses only the first element's length.
+        @param data: np.ndarray of equal-length strings.
+        """
+        super().fit(data)
+        self.norm_factor = len(data[0])
+    
+    def transform(self, pair: tuple) -> int:
+        """
+        Transforms a single pair of strings into a normalized distance.
+        @param pair: tuple of two strings
+        @return int: normalized alignment distance
+        """
+        super().transform(pair)
+        return pairwise2.align.localxx(pair[0], pair[1], score_only=True)
+    
+    def postprocessor(self, data: np.ndarray) -> np.ndarray:
+        """
+        Normalizes output distances based on factors.
+        @param data: np.ndarray
+        @return np.ndarray
+        """
+        return np.tanh((self.norm_factor - data) / self.norm_factor)

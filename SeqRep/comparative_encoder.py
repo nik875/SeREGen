@@ -72,7 +72,7 @@ class ComparativeEncoder:
             self.distance.fit(data)
     
     def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int, chunksize: int,
-                          batch_size: int, postprocessor: callable):
+                          batch_size: int):
         """
         Train a single randomized epoch on data and distance_on.
         @param data: data to train model on.
@@ -93,15 +93,14 @@ class ComparativeEncoder:
         with mp.Pool(jobs) as p:
             y = np.array(list(tqdm(p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize),
                                    total=y1.shape[0])))
-        y = postprocessor(y)  # Additional transformations are applied here
+        y = self.distance.postprocessor(y)  # Additional transformations are applied here
         
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
         train_data = train_data.batch(batch_size)
         
         self.comparative_model.fit(train_data, epochs=1)
     
-    def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1, silent=False,
-            distance_postprocessor=None):
+    def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1, silent=False):
         """
         Fit the ComparativeEncoder to the given data.
         @param data: np.ndarray to train on.
@@ -116,8 +115,7 @@ class ComparativeEncoder:
         """
         distance_on = distance_on if distance_on is not None else data
         self._fit_distance(distance_on)
-        epoch = lambda: self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size,
-                                               distance_postprocessor or (lambda x: x))
+        epoch = lambda: self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
         
         for i in range(epochs):
             start = time.time()
