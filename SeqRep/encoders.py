@@ -1,5 +1,5 @@
 import tensorflow as tf
-from exceptions import IncompatibleDimensionsException
+from .exceptions import IncompatibleDimensionsException
 
 
 class AttentionBlock(tf.keras.layers.Layer):

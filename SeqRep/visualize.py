@@ -1,6 +1,4 @@
 import typing
-
-
 import matplotlib.pyplot as plt
 import numpy as np
 from .dataset_builder import Dataset

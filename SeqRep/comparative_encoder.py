@@ -4,7 +4,6 @@ import multiprocessing as mp
 import numpy as np
 import tensorflow as tf
 from keras import backend as K
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 from . import distance
