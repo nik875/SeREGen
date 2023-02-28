@@ -45,7 +45,7 @@ class ModelBuilder:
         """
         Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size.
         """
-        return tuple(self.current[1:])
+        return tuple(self.current.shape[1:])
     
     def compile(self, output_dim=2) -> tf.keras.Model:
         """
