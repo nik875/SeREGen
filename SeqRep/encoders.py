@@ -1,5 +1,5 @@
 import tensorflow as tf
-import numpy as np
+from exceptions import IncompatibleDimensionsException
 
 
 class AttentionBlock(tf.keras.layers.Layer):
@@ -34,12 +34,18 @@ class ModelBuilder:
         """
         self.inputs = tf.keras.layers.Input(input_shape)
         self.current = self.inputs
-    
+
     def summary(self):
         """
         Display a summary of the model as it currently stands.
         """
         tf.keras.Model(inputs=self.inputs, outputs=self.current).summary()
+
+    def _shape(self) -> tuple:
+        """
+        Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size.
+        """
+        return tuple(self.current[1:])
     
     def compile(self, output_dim=2) -> tf.keras.Model:
         """
@@ -48,7 +54,7 @@ class ModelBuilder:
         @return tf.keras.Model
         """
         self.flatten()
-        self.dense(output_dim, activation=None)  # Create special output layer
+        self.dense(output_dim)  # Create special output layer
         return tf.keras.Model(inputs=self.inputs, outputs=self.current)
     
     def custom_layer(self, layer: tf.keras.layers.Layer):
@@ -70,6 +76,13 @@ class ModelBuilder:
         Add a flatten layer. Additional keyword arguments accepted.
         """
         self.current = tf.keras.layers.Flatten(**kwargs)(self.current)
+
+    def dropout(self, rate, **kwargs):
+        """
+        Add a dropout layer. Additional keyword arguments accepted.
+        @param rate: rate to drop out inputs.
+        """
+        self.current = tf.keras.layers.Dropout(rate=rate, **kwargs)(self.current)
     
     def dense(self, size: int, depth=1, activation='relu', **kwargs):
         """
@@ -81,42 +94,46 @@ class ModelBuilder:
         """
         for _ in range(depth):
             self.current = tf.keras.layers.Dense(size, activation=activation, **kwargs)(self.current)
-    
-    def conv1D(self, filters: int, kernel_size: int, output_dim: int, divide=None, expand=True, **kwargs):
+
+    def embeddings(self, size: int, activation='relu', **kwargs):
         """
-        Add a convolutional layer. Output passes through feed forward network with size specified by filters.
-        @param filters: output size of the layer.
+        Expand dimensions and create `size` embeddings.
+        @param size: size of embeddings
+        @param activation: activation function to use for dense layers
+        Additional keyword arguments are accepted for Dense layer constructor.
+        """
+        orig_shape = self._shape()
+        self.dense(size * self._shape()[-1], activation=activation, **kwargs)
+        self.reshape((*orig_shape, size))
+
+    def conv1D(self, filters: int, kernel_size: int, output_size: int, **kwargs):
+        """
+        Add a convolutional layer. Output passes through feed forward layer with size specified by output_dim.
+        @param filters: number of convolution filters to use.
         @param kernel_size: size of convolution kernel. Must be less than the first dimension of prior layer's shape.
-        @param divide: integer value to divide previous size by for dimension expansion. Must be divisible.
+        @param output_size: output size of the layer.
         Additional keyword arguments are passed to TensorFlow Conv1D layer constructor.
         """
-        orig_shape = tuple(self.current.shape)[1:]
-        if expand:
-            if divide:
-                self.reshape((*orig_shape[:-1], orig_shape[-1] // divide, divide))
-            else:
-                self.reshape((*orig_shape, 1))
+        if len(self._shape()) != 2:
+            raise IncompatibleDimensionsException()
+        if kernel_size >= self._shape()[0]:
+            raise IncompatibleDimensionsException()
+
         self.current = tf.keras.layers.Conv1D(filters, kernel_size, **kwargs)(self.current)
         self.current = tf.keras.layers.MaxPooling1D()(self.current)
         self.current = tf.keras.layers.Flatten()(self.current)  # Removes extra dimension from shape
         self.current = tf.keras.layers.BatchNormalization()(self.current)
-        self.dense(output_dim)
+        self.dense(output_size, activation='relu')
     
-    def attention(self, embed_dim: int, num_heads: int, output_dim: int, divide=False, expand=True, rate=.1):
+    def attention(self, num_heads: int, output_size: int, rate=.1):
         """
-        Add an attention layer.
-        @param embed_dim: Desired embedding dimension size. New dimension will be created to accomodate.
+        Add an attention layer. Embeddings must be generated beforehand.
         @param num_heads: Number of attention heads.
-        @param output_dim: Output size.
-        @param divide: whether to divide last dimension of previous layer by embed_dim to generate embeddings.
+        @param output_size: Output size.
         @param rate: Learning rate for AttentionBlock.
         """
-        shape = tuple(self.current.shape[1:])
-        if expand:
-            if divide:
-                self.reshape((*shape[:-1], shape[-1] // embed_dim, embed_dim))
-            else:
-                self.dense(shape[-1] * embed_dim)
-                self.reshape((*shape[:-1], shape[-1], embed_dim))
-        self.current = AttentionBlock(embed_dim, num_heads, output_dim, rate=rate)(self.current)
+        if len(self._shape()) != 2:
+            raise IncompatibleDimensionsException()
+
+        self.current = AttentionBlock(self._shape()[1], num_heads, output_size, rate=rate)(self.current)
         self.current = tf.keras.layers.BatchNormalization()(self.current)

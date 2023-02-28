@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 from . import distance
-from .output_mgmt import suppress_output
+from ._output_mgmt import suppress_output
 
 
 def correlation_coefficient_loss(y_true, y_pred):
@@ -80,7 +80,6 @@ class ComparativeEncoder:
         @param jobs: number of CPU jobs to use.
         @param chunksize: chunksize for Python multiprocessing
         @param batch_size: batch size for TensorFlow.
-        @param postprocessor: callable that transforms a vector of distances.
         """
         rng = np.random.default_rng()
         p1 = rng.permutation(data.shape[0])
@@ -111,7 +110,6 @@ class ComparativeEncoder:
         @param epochs: epochs to train for.
         @param jobs: number of CPU jobs to use for distance calculations (these are not GPU optimized).
         @param silent: whether to suppress output.
-        @param distance_postprocessor: callable that transforms a vector of distances.
         """
         distance_on = distance_on if distance_on is not None else data
         self._fit_distance(distance_on)
