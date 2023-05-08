@@ -6,26 +6,15 @@ import numpy as np
 import pandas as pd
 from Bio import SeqIO
 from tqdm import tqdm
-from kpal.klib import Profile
 from sklearn.preprocessing import LabelBinarizer
+
+from .kmers import KMerCounter
 tqdm.pandas()
 
 
 # Avoid creating encoder object every single time encode is called
 _ENC = LabelBinarizer(sparse_output=False)
 _ENC.fit(['A', 'C', 'G', 'N', 'U'])
-
-
-class _KMerCounter:
-    """
-    Helper class for Python multiprocessing library, allows for kmer counting multiprocessing
-    with arbitrary values of k.
-    """
-    def __init__(self, K: int):
-        self.K = K
-    
-    def count(self, seq: str) -> np.ndarray:
-        return Profile.from_sequences([seq], self.K).counts
 
 
 class _SequenceTrimmer:
@@ -35,7 +24,7 @@ class _SequenceTrimmer:
     """
     def __init__(self, length: int):
         self.length = length
-    
+
     def trim(self, seq: str) -> str:
         seq = seq[:self.length]
         return seq + ('N' * (self.length - len(seq)))
@@ -58,14 +47,14 @@ class TaxSeries(pd.Series):
         level = self.tax.index(level) if isinstance(level, str) else level
         assert level != -1
         return self.apply(lambda i: i[level] == value)
-    
+
     def correct_length_mask(self) -> pd.Series:
         """
         Return a mask for all values of this series with a correct number of elements.
         @return pd.Series: boolean mask
         """
         return self.apply(len) == len(self.tax)
-    
+
     def index_of_level(self, value: str) -> int:
         """
         Given a taxonomic level, return the index of that level.
@@ -158,7 +147,7 @@ class Dataset(pd.DataFrame):
         """
         assert self['tax'] is not None
         return self.loc[self['tax'].correct_length_mask()]
-    
+
     def length_dist(self, progress=True):
         """
         Plots a histogram of the sequence lengths in this dataset. Helpful for selecting a trim length.
@@ -166,7 +155,7 @@ class Dataset(pd.DataFrame):
         """
         plt.hist(self['seqs'].progress_apply(len) if progress else self['seqs'].apply(len))
         plt.show()
-    
+
     def trim_seqs(self, length: int):
         """
         Trim all sequences to the given length and pad sequences with N which are too short.
@@ -183,7 +172,7 @@ class Dataset(pd.DataFrame):
         @return np.ndarray: Encoded sequence
         """
         return _ENC.transform(list(seq))
-    
+
     def one_hot_encode(self, jobs=1, chunksize=1, progress=True):
         """
         One hot encode all sequences in this dataset.
@@ -194,19 +183,25 @@ class Dataset(pd.DataFrame):
         with mp.Pool(jobs) as p:
             imap = p.imap(self._encode_sequence, self['seqs'], chunksize=chunksize)
             return np.array(list(tqdm(imap, total=len(self)) if progress else imap))
-    
-    def count_kmers(self, K: int, jobs=1, chunksize=1, progress=True):
+
+    def gen_kmer_seqs(self, K, jobs=1, chunksize=1, progress=True) -> list:
         """
-        Count kmers for all sequences. Stored in column 'kmer_counts' as column of numpy arrays.
+        Convert all sequences to kmer sequences.
+        """
+        counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
+        return counter.kmer_sequences(self['seqs'].to_numpy, quiet=progress)
+
+    def count_kmers(self, K: int, jobs=1, chunksize=1, progress=True) -> list:
+        """
+        Count kmers for all sequences.
         @param K: Length of sequences to match.
         @param jobs: number of multiprocessing jobs
         @param chunksize: chunksize for multiprocessing
         @param progress: optional progress bar
+        @return list: counts of each kmer for all sequences
         """
-        counter = _KMerCounter(K)
-        with mp.Pool(jobs) as p:
-            imap = p.imap(counter.count, self['seqs'], chunksize=chunksize)
-            return np.array(list(tqdm(imap, total=len(self)) if progress else imap))
+        counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
+        return counter.kmer_counts(self['seqs'].to_numpy(), quiet=progress)
 
 
 class HeaderParser:
