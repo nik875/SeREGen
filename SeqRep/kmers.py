@@ -101,4 +101,26 @@ class KMerCounter:
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         """
         return self._gen_kmers(seqs, self.str_to_kmer_counts, quiet, not self.debug)
+    
+    def _ohe_seq(self, seq: np.ndarray) -> np.ndarray:
+        """
+        One-hot encode a numerical sequence.
+        """
+        s = np.zeros((len(seq), 4 ** self.k))
+        s[np.arange(len(seq)), seq] = 1
+        return s
 
+    def kmer_sequences_ohe(self, seqs: list, trim_to=None, quiet=False) -> list:
+        """
+        Generate kmer sequences for a given array of string sequences. Result is one-hot encoded.
+        Sequences do not need to be uniform length. Invalid/unknown base pairs will be ignored.
+        """
+        kmers = self.kmer_sequences(seqs, quiet=quiet)
+        if trim_to is None:
+            return self._gen_kmers(kmers, self._ohe_seq, quiet, False)
+        assert all(len(i) >= trim_to for i in kmers)
+        kmers = np.stack([i[:trim_to] for i in kmers])
+        result = np.zeros((*kmers.shape, 4 ** self.k))
+        indices = np.concatenate(np.array(np.meshgrid(np.arange(kmers.shape[0]), np.arange(kmers.shape[1]))).T)
+        result[indices[:, 0], indices[:, 1], kmers.flatten()] = 1
+        return result

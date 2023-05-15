@@ -54,7 +54,7 @@ class ModelBuilder:
         @return tf.keras.Model
         """
         self.flatten()
-        self.dense(output_dim)  # Create special output layer
+        self.dense(output_dim, activation=None)  # Create special output layer
         return tf.keras.Model(inputs=self.inputs, outputs=self.current)
     
     def custom_layer(self, layer: tf.keras.layers.Layer):

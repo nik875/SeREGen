@@ -3,6 +3,7 @@ from scipy import stats
 import matplotlib.pyplot as plt
 from kpal.metrics import euclidean
 from Bio import pairwise2
+from tqdm import tqdm as tqdm
 
 
 class Distance:
@@ -102,17 +103,19 @@ class Alignment(Distance):
     Normalized alignment distance between two textual DNA sequences. Sequences must
     all have equal lengths.
     """
+    MAX_DIST = 2 ** .5  # Sqrt(2) for max dist means a grid selection area with side length 1
+    AVERAGE_DIST = 0.5232711374270173  # Empirically determined for this MAX_DIST
+    
     def fit(self, data):
         """
-        Fits the distance metric to a given dataset. Uses only the first element's length.
-        @param data: np.ndarray of equal-length strings.
+        Fits the distance metric to a given dataset.
+        @param data: np.ndarray of string sequences.
         """
         super().fit(data)
-        self.norm_factor = len(data[0])
     
     def transform(self, pair: tuple) -> int:
         """
-        Transforms a single pair of strings into a normalized distance.
+        Transforms a single pair of strings into a similarity score.
         @param pair: tuple of two strings
         @return int: normalized alignment distance
         """
@@ -121,8 +124,11 @@ class Alignment(Distance):
     
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
         """
-        Normalizes output distances based on factors.
+        Converts similarity scores into normalized distances for output.
         @param data: np.ndarray
         @return np.ndarray
         """
-        return np.tanh((self.norm_factor - data) / self.norm_factor)
+        data = np.max(data) - data
+        zscores = (data - np.mean(data)) / np.std(data)
+        max_zscore = np.max(zscores)
+        return self.MAX_DIST / (np.max(zscores) - np.min(zscores)) * zscores + self.AVERAGE_DIST
