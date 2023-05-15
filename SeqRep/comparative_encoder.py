@@ -47,7 +47,7 @@ class ComparativeEncoder:
         """
         @param encoder: TensorFlow model that must support .train() and .__call__() at minimum.
         .predict() required for progress bar when transforming data.
-        @param distance: distance metric to use when comparing two sequences.
+        @param dist: distance metric to use when comparing two sequences.
         """
         input_shape = encoder.layers[0].output_shape[0][1:]
         self.encoder = encoder
@@ -63,6 +63,18 @@ class ComparativeEncoder:
             )
             self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
             self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
+
+    @classmethod
+    def from_model_builder(cls, obj, dist=None, **compile_params):
+        """
+        Factory function from a ModelBuilder object.
+        @param obj: ModelBuilder object.
+        @param dist: distance metric to use when comparing two sequences.
+        @param compile_params: passed into ModelBuilder.compile()
+        @return ComparativeEncoder: new object
+        """
+        model = obj.compile(**compile_params)
+        return cls(model, dist=dist, strategy=obj.strategy)
 
     def _fit_distance(self, data: np.ndarray):
         """
