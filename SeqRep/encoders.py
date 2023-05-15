@@ -27,12 +27,13 @@ class ModelBuilder:
     """
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
-    def __init__(self, input_shape: tuple, distribute=False):
+    def __init__(self, input_shape: tuple, distribute_strategy=None):
         """
         Create a new ModelBuilder object.
         @param input_shape: Shape of model input.
+        @param distribute_strategy: strategy to use for distributed training. defaults to training on a single GPU.
         """
-        self.strategy = tf.distribute.MirroredStrategy() if distribute else tf.distribute.get_strategy()
+        self.strategy = distribute_strategy or tf.distribute.get_strategy()
         with self.strategy.scope():
             self.inputs = tf.keras.layers.Input(input_shape)
         self.current = self.inputs
