@@ -63,9 +63,6 @@ class ComparativeEncoder:
             )
             self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
             self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
-            # Pull model is used for first epoch to "pull" the model faster down the gradient using mse loss
-            self.comparative_model_pull = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
-            self.comparative_model_pull.compile(optimizer='adam', loss='mse')
 
     @classmethod
     def from_model_builder(cls, obj, dist=None, **compile_params):
@@ -87,11 +84,10 @@ class ComparativeEncoder:
         if not self.distance.fit_called:
             self.distance.fit(data)
 
-    def _randomized_epoch(self, model, data: np.ndarray, distance_on: np.ndarray, jobs: int, chunksize: int,
+    def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int, chunksize: int,
                           batch_size: int):
         """
         Train a single randomized epoch on data and distance_on.
-        @param model: model to train
         @param data: data to train model on.
         @param distance_on: data to use for distance computations.
         @param jobs: number of CPU jobs to use.
@@ -119,9 +115,9 @@ class ComparativeEncoder:
         options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.OFF
         train_data = train_data.with_options(options)
 
-        model.fit(train_data, epochs=1)
+        self.comparative_model.fit(train_data, epochs=1)
 
-    def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1, silent=False, fine_tune=False):
+    def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1, silent=False):
         """
         Fit the ComparativeEncoder to the given data.
         @param data: np.ndarray to train on.
@@ -132,14 +128,11 @@ class ComparativeEncoder:
         @param epochs: epochs to train for.
         @param jobs: number of CPU jobs to use for distance calculations (these are not GPU optimized).
         @param silent: whether to suppress output.
-        @param fine_tune: whether to run a pull epoch. defaults to true.
         """
         distance_on = distance_on if distance_on is not None else data
         self._fit_distance(distance_on)
-        if not fine_tune:  # Run pull epoch
-            self._randomized_epoch(self.comparative_model_pull, data, distance_on, jobs, chunksize, batch_size)
+        epoch = lambda: self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
 
-        epoch = lambda: self._randomized_epoch(self.comparative_model, data, distance_on, jobs, chunksize, batch_size)
         for i in range(epochs):
             start = time.time()
             if silent:
