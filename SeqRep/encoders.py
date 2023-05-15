@@ -33,7 +33,7 @@ class ModelBuilder:
         @param input_shape: Shape of model input.
         """
         self.strategy = tf.distribute.MirroredStrategy() if distribute else tf.distribute.get_strategy()
-        with strategy.scope():
+        with self.strategy.scope():
             self.inputs = tf.keras.layers.Input(input_shape)
         self.current = self.inputs
 
