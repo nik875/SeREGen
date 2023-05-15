@@ -43,7 +43,7 @@ class ComparativeEncoder:
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, encoder: tf.keras.Model, dist=None):
+    def __init__(self, encoder: tf.keras.Model, dist=None, distribute=False):
         """
         @param encoder: TensorFlow model that must support .train() and .__call__() at minimum.
         .predict() required for progress bar when transforming data.
@@ -52,8 +52,9 @@ class ComparativeEncoder:
         input_shape = encoder.layers[0].output_shape[0][1:]
         self.encoder = encoder
         self.distance = dist or distance.Distance()
+        self.strategy = tf.distribute.MirroredStrategy() if distribute else tf.distribute.get_strategy()
 
-        with self.encoder.strategy.scope():
+        with self.strategy.scope():
             inputa = tf.keras.layers.Input(input_shape, name='input_a')
             inputb = tf.keras.layers.Input(input_shape, name='input_b')
             distances = DistanceLayer()(
