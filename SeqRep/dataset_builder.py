@@ -6,15 +6,10 @@ import numpy as np
 import pandas as pd
 from Bio import SeqIO
 from tqdm import tqdm
-from sklearn.preprocessing import LabelBinarizer
 
 from .kmers import KMerCounter
+from .ohe import OneHotEncoder
 tqdm.pandas()
-
-
-# Avoid creating encoder object every single time encode is called
-_ENC = LabelBinarizer(sparse_output=False)
-_ENC.fit(['A', 'C', 'G', 'N', 'U'])
 
 
 class _SequenceTrimmer:
@@ -91,7 +86,7 @@ class DatasetBuilder:
 
     def from_fasta(self, paths: list[str]):
         """
-        Factory function that builds a dataset from a fasta file. reads in all sequences from all fasta files in list.
+        Factory function that builds a dataset from a fasta file. Reads in all sequences from all fasta files in list.
         @param paths: list of fasta file paths.
         @return dataset: new dataset object
         """
@@ -173,23 +168,22 @@ class Dataset(pd.DataFrame):
         """
         return _ENC.transform(list(seq))
 
-    def one_hot_encode(self, jobs=1, chunksize=1, progress=True):
+    def one_hot_encode(self, jobs=1, chunksize=1, trim_to=None, progress=True):
         """
         One hot encode all sequences in this dataset.
         @param jobs: number of multiprocessing jobs
         @param chunksize: chunksize for multiprocessing
         @param progress: optional progress bar
         """
-        with mp.Pool(jobs) as p:
-            imap = p.imap(self._encode_sequence, self['seqs'], chunksize=chunksize)
-            return np.array(list(tqdm(imap, total=len(self)) if progress else imap))
+        enc = OneHotEncoder(jobs=jobs, chunksize=chunksize)
+        return enc.encode_seqs(self['seqs'].to_numpy(), trim_to=trim_to, quiet=not progress)
 
-    def gen_kmer_seqs(self, K, jobs=1, chunksize=1, progress=True) -> list:
+    def gen_kmer_seqs(self, K, jobs=1, chunksize=1, trim_to=None, progress=True) -> list:
         """
-        Convert all sequences to kmer sequences.
+        Convert all sequences to one-hot encoded kmer sequences.
         """
         counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
-        return counter.kmer_sequences(self['seqs'].to_numpy, quiet=progress)
+        return counter.kmer_sequences_ohe(self['seqs'].to_numpy(), trim_to=trim_to, quiet=not progress)
 
     def count_kmers(self, K: int, jobs=1, chunksize=1, progress=True) -> list:
         """
@@ -201,7 +195,7 @@ class Dataset(pd.DataFrame):
         @return list: counts of each kmer for all sequences
         """
         counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
-        return counter.kmer_counts(self['seqs'].to_numpy(), quiet=progress)
+        return counter.kmer_counts(self['seqs'].to_numpy(), quiet=not progress)
 
 
 class HeaderParser:
@@ -248,5 +242,5 @@ class SILVAHeaderParser(HeaderParser):
         Passes a custom tax_extractor and tax_hierarchy to superclass.
         """
         def tax_extractor(header: str):
-            return np.array(header.split(' ')[1].split(';'))
+            return np.array(' '.join(header.split(' ')[1:]).split(';'))
         super().__init__(tax_extractor, ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species'])
