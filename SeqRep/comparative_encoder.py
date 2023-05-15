@@ -52,16 +52,17 @@ class ComparativeEncoder:
         input_shape = encoder.layers[0].output_shape[0][1:]
         self.encoder = encoder
         self.distance = dist or distance.Distance()
-        
-        inputa = tf.keras.layers.Input(input_shape, name='input_a')
-        inputb = tf.keras.layers.Input(input_shape, name='input_b')
-        distances = DistanceLayer()(
-            encoder(inputa),
-            encoder(inputb),
-        )
-        self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
-        self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
-    
+
+        with self.encoder.strategy.scope():
+            inputa = tf.keras.layers.Input(input_shape, name='input_a')
+            inputb = tf.keras.layers.Input(input_shape, name='input_b')
+            distances = DistanceLayer()(
+                encoder(inputa),
+                encoder(inputb),
+            )
+            self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
+            self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
+
     def _fit_distance(self, data: np.ndarray):
         """
         Checks self.distance.fit_called. If false, calls fit on data.
@@ -69,7 +70,7 @@ class ComparativeEncoder:
         """
         if not self.distance.fit_called:
             self.distance.fit(data)
-    
+
     def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int, chunksize: int,
                           batch_size: int):
         """
@@ -87,17 +88,17 @@ class ComparativeEncoder:
         p2 = rng.permutation(data.shape[0])
         x2 = data[p2]
         y2 = distance_on[p2]
-        
+
         with mp.Pool(jobs) as p:
             y = np.array(list(tqdm(p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize),
                                    total=y1.shape[0])))
         y = self.distance.postprocessor(y)  # Additional transformations are applied here
-        
+
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
         train_data = train_data.batch(batch_size)
-        
+
         self.comparative_model.fit(train_data, epochs=1)
-    
+
     def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1, silent=False):
         """
         Fit the ComparativeEncoder to the given data.
@@ -113,7 +114,7 @@ class ComparativeEncoder:
         distance_on = distance_on if distance_on is not None else data
         self._fit_distance(distance_on)
         epoch = lambda: self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
-        
+
         for i in range(epochs):
             start = time.time()
             if silent:
@@ -122,11 +123,11 @@ class ComparativeEncoder:
                 print(f'Epoch {i + 1}:')
                 epoch()
                 print(f'Epoch time: {time.time() - start}')
-    
+
     def transform(self, data: np.ndarray, progress=True, batch_size=10) -> np.ndarray:
         """
         Transform the given data into representations using trained model.
-        
+
         @param data: np.ndarray containing all sequences to transform.
         @param progress: Shows a progress bar. Using progress=True slows down execution due to batching
         in TensorFlow's .predict() as opposed to .__call__(). batch_size argument is also required for
@@ -138,14 +139,14 @@ class ComparativeEncoder:
         if progress:
             return self.encoder.predict(data, batch_size=batch_size)
         return self.encoder(data)
-    
+
     def save(self, path: str):
         """
         Save the encoder model to the given path.
         @param path: path to save to.
         """
         self.encoder.save(path)
-    
+
     @classmethod
     def load(cls, path: str, dist=None):
         """

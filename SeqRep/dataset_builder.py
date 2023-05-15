@@ -248,5 +248,5 @@ class SILVAHeaderParser(HeaderParser):
         Passes a custom tax_extractor and tax_hierarchy to superclass.
         """
         def tax_extractor(header: str):
-            return np.array(header.split(' ')[1].split(';'))
+            return np.array(' '.join(header.split(' ')[1:]).split(';'))
         super().__init__(tax_extractor, ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species'])

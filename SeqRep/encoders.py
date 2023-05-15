@@ -27,12 +27,14 @@ class ModelBuilder:
     """
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
-    def __init__(self, input_shape: tuple):
+    def __init__(self, input_shape: tuple, distribute=False):
         """
         Create a new ModelBuilder object.
         @param input_shape: Shape of model input.
         """
-        self.inputs = tf.keras.layers.Input(input_shape)
+        self.strategy = tf.distribute.MirroredStrategy() if distribute else tf.distribute.get_strategy()
+        with strategy.scope():
+            self.inputs = tf.keras.layers.Input(input_shape)
         self.current = self.inputs
 
     def summary(self):
@@ -46,7 +48,7 @@ class ModelBuilder:
         Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size.
         """
         return tuple(self.current.shape[1:])
-    
+
     def compile(self, output_dim=2) -> tf.keras.Model:
         """
         Create and return an encoder model.
@@ -55,35 +57,40 @@ class ModelBuilder:
         """
         self.flatten()
         self.dense(output_dim)  # Create special output layer
-        return tf.keras.Model(inputs=self.inputs, outputs=self.current)
-    
+        with self.strategy.scope():
+            return tf.keras.Model(inputs=self.inputs, outputs=self.current)
+
     def custom_layer(self, layer: tf.keras.layers.Layer):
         """
         Add a custom layer to the model.
         @param layer: TensorFlow layer to add.
         """
-        self.current = layer(self.current)
-    
+        with self.strategy.scope():
+            self.current = layer(self.current)
+
     def reshape(self, new_shape: tuple, **kwargs):
         """
         Add a reshape layer. Additional keyword arguments accepted.
         @param new_shape: tuple new shape.
         """
-        self.current = tf.keras.layers.Reshape(new_shape, **kwargs)(self.current)
-    
+        with self.strategy.scope():
+            self.current = tf.keras.layers.Reshape(new_shape, **kwargs)(self.current)
+
     def flatten(self, **kwargs):
         """
         Add a flatten layer. Additional keyword arguments accepted.
         """
-        self.current = tf.keras.layers.Flatten(**kwargs)(self.current)
+        with self.strategy.scope():
+            self.current = tf.keras.layers.Flatten(**kwargs)(self.current)
 
     def dropout(self, rate, **kwargs):
         """
         Add a dropout layer. Additional keyword arguments accepted.
         @param rate: rate to drop out inputs.
         """
-        self.current = tf.keras.layers.Dropout(rate=rate, **kwargs)(self.current)
-    
+        with self.strategy.scope():
+            self.current = tf.keras.layers.Dropout(rate=rate, **kwargs)(self.current)
+
     def dense(self, size: int, depth=1, activation='relu', **kwargs):
         """
         Procedurally add dense layers to the model.
@@ -92,10 +99,11 @@ class ModelBuilder:
         @param activation: activation function to use (relu by default).
         Additional keyword arguments are passed to TensorFlow Dense layer constructor.
         """
-        for _ in range(depth):
-            self.current = tf.keras.layers.Dense(size, activation=activation, **kwargs)(self.current)
+        with self.strategy.scope():
+            for _ in range(depth):
+                self.current = tf.keras.layers.Dense(size, activation=activation, **kwargs)(self.current)
 
-    def embeddings(self, size: int, activation='relu', **kwargs):
+    def embeddings(self, size: int, activation='relu', **kwargs):  # TODO: USE ACTUAL EMBEDDING LAYER
         """
         Expand dimensions and create `size` embeddings.
         @param size: size of embeddings
@@ -103,8 +111,9 @@ class ModelBuilder:
         Additional keyword arguments are accepted for Dense layer constructor.
         """
         orig_shape = self._shape()
-        self.dense(size * self._shape()[-1], activation=activation, **kwargs)
-        self.reshape((*orig_shape, size))
+        with self.strategy.scope():
+            self.dense(size * self._shape()[-1], activation=activation, **kwargs)
+            self.reshape((*orig_shape, size))
 
     def conv1D(self, filters: int, kernel_size: int, output_size: int, **kwargs):
         """
@@ -119,12 +128,13 @@ class ModelBuilder:
         if kernel_size >= self._shape()[0]:
             raise IncompatibleDimensionsException()
 
-        self.current = tf.keras.layers.Conv1D(filters, kernel_size, **kwargs)(self.current)
-        self.current = tf.keras.layers.MaxPooling1D()(self.current)
-        self.current = tf.keras.layers.Flatten()(self.current)  # Removes extra dimension from shape
-        self.current = tf.keras.layers.BatchNormalization()(self.current)
+        with self.strategy.scope():
+            self.current = tf.keras.layers.Conv1D(filters, kernel_size, **kwargs)(self.current)
+            self.current = tf.keras.layers.MaxPooling1D()(self.current)
+            self.current = tf.keras.layers.Flatten()(self.current)  # Removes extra dimension from shape
+            self.current = tf.keras.layers.BatchNormalization()(self.current)
         self.dense(output_size, activation='relu')
-    
+
     def attention(self, num_heads: int, output_size: int, rate=.1):
         """
         Add an attention layer. Embeddings must be generated beforehand.
@@ -135,5 +145,7 @@ class ModelBuilder:
         if len(self._shape()) != 2:
             raise IncompatibleDimensionsException()
 
-        self.current = AttentionBlock(self._shape()[1], num_heads, output_size, rate=rate)(self.current)
-        self.current = tf.keras.layers.BatchNormalization()(self.current)
+        with self.strategy.scope():
+            self.current = AttentionBlock(self._shape()[1], num_heads, output_size, rate=rate)(self.current)
+            self.current = tf.keras.layers.BatchNormalization()(self.current)
+
