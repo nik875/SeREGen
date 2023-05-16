@@ -110,9 +110,8 @@ class ComparativeEncoder:
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
         train_data = train_data.batch(batch_size)
 
-        # Disable AutoShard.
         options = tf.data.Options()
-        options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.OFF
+        options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
         train_data = train_data.with_options(options)
 
         self.comparative_model.fit(train_data, epochs=1)
@@ -153,10 +152,14 @@ class ComparativeEncoder:
         @param batch_size: Batch size for .predict(), not required if not using progress.
         @return np.ndarray: Representations for all sequences in data.
         """
+        dataset = tf.data.Dataset.from_tensor_slices(data)
+        options = tf.data.Options()
+        options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
+        dataset.with_options(options)
         self._fit_distance(data)
         if progress:
-            return self.encoder.predict(data, batch_size=batch_size)
-        return self.encoder(data)
+            return self.encoder.predict(dataset, batch_size=batch_size)
+        return self.encoder(dataset)
 
     def save(self, path: str):
         """
