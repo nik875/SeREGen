@@ -45,6 +45,10 @@ class Distance:
         return data
 
 
+def _euclidean_dist_tup(tup: tuple) -> float:
+    return euclidean(*tup)
+
+
 class Euclidean(Distance):
     """
     Normalized Euclidean distance implementation between two arrays of numbers.
@@ -69,7 +73,7 @@ class Euclidean(Distance):
         b = rng.permutation(data)[:sample_size]
         tups = zip(a, b)
         with mp.Pool(jobs) as p:
-            result = np.fromiter(tqdm(p.imap_unordered(euclidean, tups, chunksize=chunksize),
+            result = np.fromiter(tqdm(p.imap_unordered(_euclidean_dist_tup, tups, chunksize=chunksize),
                                       total=sample_size), dtype=np.float)
         # Reduce bias by trimming all zscores more than self.max_zscore_dev away from mean
         mask = np.logical_and(zscores > -1 * self.max_zscore_dev, zscores < self.max_zscore_dev)
