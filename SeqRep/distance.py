@@ -50,7 +50,7 @@ class _RandomDistanceCalculator:
         self.data = data
         self.rng = np.random.default_rng()
 
-    def gen(_) -> float:
+    def gen(self, _) -> float:
         return euclidean(self.rng.choice(self.data), self.rng.choice(self.data))
 
 
