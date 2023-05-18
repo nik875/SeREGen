@@ -32,16 +32,17 @@ class LabelSeries(pd.Series):
     def _constructor(self):
         return LabelSeries
 
-    def tax_mask(self, level: typing.Union[str, int], value: str) -> pd.Series:
+    def label_mask(self, label: typing.Union[str, int], value: str) -> pd.Series:
         """
-        Returns a mask for all values of this series where the given taxonomic level equals the value.
-        @param level: taxonomic rank to target search
+        Returns a mask for all values of this series where the given label equals the value.
+        @param label: label to target search
         @param value: search query
         @return pd.Series: boolean mask
         """
-        level = self.labels.index(level) if isinstance(level, str) else level
-        assert level != -1
-        return self.apply(lambda i: i[level] == value)
+        level = self.labels.index(label) if isinstance(label, str) else label
+        if label == -1:
+            raise ValueError('Label not in dataset!')
+        return self.apply(lambda i: i[label] == value)
 
     def correct_length_mask(self) -> pd.Series:
         """
@@ -50,13 +51,13 @@ class LabelSeries(pd.Series):
         """
         return self.apply(len) == len(self.labels)
 
-    def index_of_label(self, value: str) -> int:
+    def index_of_label(self, label: str) -> int:
         """
-        Given a taxonomic level, return the index of that level.
-        @param value: taxonomic level
+        Given a label, return the index of that label.
+        @param label: label to search for
         @return int: index
         """
-        return self.labels.index(value)
+        return self.labels.index(label)
 
 
 class DatasetBuilder:
@@ -97,9 +98,9 @@ class DatasetBuilder:
             seqs.append(s)
         raw_headers = np.concatenate(raw_headers)
         seqs = np.concatenate(seqs)
-        tax = self.header_parser(raw_headers) if self.header_parser else None
-        cls = self._dataset_decorator(type(tax)) if tax is not None else Dataset
-        return cls({'orig_seqs': seqs, 'seqs': seqs, 'raw_headers': raw_headers, 'tax': tax})
+        labels = self.header_parser(raw_headers) if self.header_parser else None
+        cls = self._dataset_decorator(type(labels)) if labels is not None else Dataset
+        return cls({'orig_seqs': seqs, 'seqs': seqs, 'raw_headers': raw_headers, 'labels': labels})
 
     def __init__(self, header_parser=None):
         """
@@ -115,7 +116,7 @@ class Dataset(pd.DataFrame):
     orig_seqs: raw, unprocessed sequence data. acts like a "backup" when performing transformations on sequences.
     seqs: sequences that can be transformed by built-in functions
     raw_headers: raw, unprocessed header data.
-    tax: taxonomic information, present only if HeaderParser passed to DatasetBuilder or if manually added
+    labels: label data, present only if HeaderParser passed to DatasetBuilder or if manually added
     """
     @property
     def _constructor(self):
@@ -127,10 +128,10 @@ class Dataset(pd.DataFrame):
         Returns a new Dataset with label data added.
         @param lbl_rows: _LabelSeries column.
         @param lbl_cols: list of labels represented by each index.
-        @return Dataset: subclass of Dataset with tax data added.
+        @return Dataset: subclass of Dataset with label data added.
         """
         lbl_series_type = HeaderParser._lbl_series_decorator(lbl_cols)
-        series = tax_series_type(lbl_rows)
+        series = lbl_series_type(lbl_rows)
         dataset_type = DatasetBuilder._dataset_decorator(lbl_series_type)
         return dataset_type({'orig_seqs': self['orig_seqs'], 'seqs': self['seqs'],
                              'raw_headers': self['raw_headers'], 'labels': series})
@@ -203,8 +204,8 @@ class HeaderParser:
         """
         It's easily possible to create a new custom HeaderParser with a custom label_extractor function
         and a custom label_cols list. No subclassing necessary.
-        @param tax_extractor: function that takes in a raw header string and outputs a list of taxonomic elements.
-        @param tax_hierarchy: list of strings that store what each position in the taxonomic list represents.
+        @param label_extractor: function that takes in a raw header string and outputs a list of labels.
+        @param label_cols: list of strings that store what each position in the label list represents.
         """
         self.label_extractor = label_extractor
         self.label_cols = label_cols
@@ -213,9 +214,9 @@ class HeaderParser:
     def _lbl_series_decorator(label_cols: list[str]) -> type:
         """
         Hidden decorator function that returns a subclass of LabelSeries with the 'labels' attribute defined.
-        @param label_cols: list of taxonomic levels
+        @param label_cols: list of labels
         """
-        class LabelSeriesDecorated(TaxSeries):
+        class LabelSeriesDecorated(LabelSeries):
             labels = label_cols
 
             @property
@@ -239,7 +240,7 @@ class SILVAHeaderParser(HeaderParser):
     """
     def __init__(self):
         """
-        Passes a custom tax_extractor and tax_hierarchy to superclass.
+        Passes a custom label_extractor and label_cols to superclass.
         """
         def tax_extractor(header: str):
             return np.array(' '.join(header.split(' ')[1:]).split(';'))
@@ -252,7 +253,7 @@ class COVIDDataParser(HeaderParser):
     """
     def __init__(self):
         """
-        Passes a custom tax_extractor and tax_hierarchy to superclass.
+        Passes a custom label_extractor and label_cols to superclass.
         """
         def label_extractor(header: str):
             return np.array([header.split('|')[2]], dtype=str)
