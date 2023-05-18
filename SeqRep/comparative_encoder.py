@@ -160,7 +160,7 @@ class ComparativeEncoder:
         options = tf.data.Options()
         options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
         dataset.with_options(options)
-        self._fit_distance(data)
+        self._fit_distance(data, 1, 1)
         if progress:
             return self.encoder.predict(dataset, batch_size=batch_size)
         return self.encoder(dataset)
