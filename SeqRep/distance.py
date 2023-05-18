@@ -75,7 +75,8 @@ class Euclidean(Distance):
         super().fit(data)  # Update self.fit_called
         calculator = _RandomDistanceCalculator(data)
         with mp.Pool(jobs) as p:
-            result = np.fromiter(tqdm(p.imap_unordered(calculator.gen, range(sample_size)), total=sample_size), dtype=np.float)
+            result = np.fromiter(tqdm(p.imap_unordered(calculator.gen, range(sample_size), chunksize=chunksize),
+                                      total=sample_size), dtype=np.float)
         # Reduce bias by trimming all zscores more than self.max_zscore_dev away from mean
         mask = np.logical_and(zscores > -1 * self.max_zscore_dev, zscores < self.max_zscore_dev)
         result = result[mask]
