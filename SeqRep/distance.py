@@ -1,3 +1,4 @@
+import multiprocessing as mp
 import numpy as np
 from scipy import stats
 import matplotlib.pyplot as plt
@@ -44,6 +45,15 @@ class Distance:
         return data
 
 
+class _RandomDistanceCalculator:
+    def __init__(self, data: np.ndarray):
+        self.data = data
+        self.rng = np.random.default_rng()
+
+    def gen(_) -> float:
+        return euclidean(self.rng.choice(self.data), self.rng.choice(self.data))
+
+
 class Euclidean(Distance):
     """
     Normalized Euclidean distance implementation between two arrays of numbers.
@@ -54,7 +64,7 @@ class Euclidean(Distance):
         self.max_zscore_dev = max_zscore_dev
         self.mean = -1; self.std = -1; self.min_val = -1; self.sampled_zscores = None
 
-    def fit(self, data, sample_size=1000):
+    def fit(self, data, jobs=1, chunksize=1, sample_size=1000):
         """
         Fits the distance metric to a given dataset. Estimates mean, standard deviation,
         and minimum value to allow for accurate normalized score calculation.
@@ -63,10 +73,9 @@ class Euclidean(Distance):
         distance calculation before generating mean, std, and min_val parameters.
         """
         super().fit(data)  # Update self.fit_called
-        rng = np.random.default_rng()
-        # Randomly sample two elements sample_size times, compute their Euclidean distance and add to result.
-        result = np.array([euclidean(rng.choice(data), rng.choice(data)) for _ in tqdm(range(sample_size))])
-        zscores = stats.zscore(result)  # Z-score is the simplest normalization technique for a normal distribution.
+        calculator = _RandomDistanceCalculator(data)
+        with mp.Pool(jobs) as p:
+            result = np.from_iter(tqdm(p.imap_unordered(calculator.gen, range(sample_size)), total=sample_size), dtype=np.float)
         # Reduce bias by trimming all zscores more than self.max_zscore_dev away from mean
         mask = np.logical_and(zscores > -1 * self.max_zscore_dev, zscores < self.max_zscore_dev)
         result = result[mask]
@@ -106,7 +115,7 @@ class Alignment(Distance):
     MAX_DIST = 2 ** .5  # Sqrt(2) for max dist means a grid selection area with side length 1
     AVERAGE_DIST = 0.5232711374270173  # Empirically determined for this MAX_DIST
 
-    def fit(self, data):
+    def fit(self, data, **kwargs):
         """
         Fits the distance metric to a given dataset.
         @param data: np.ndarray of string sequences.

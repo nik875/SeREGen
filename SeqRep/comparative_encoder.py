@@ -76,13 +76,13 @@ class ComparativeEncoder:
         model = obj.compile(**compile_params)
         return cls(model, dist=dist, strategy=obj.strategy)
 
-    def _fit_distance(self, data: np.ndarray):
+    def _fit_distance(self, data: np.ndarray, jobs: int, chunksize: int):
         """
         Checks self.distance.fit_called. If false, calls fit on data.
         @param data: data to fit to if needed.
         """
         if not self.distance.fit_called:
-            self.distance.fit(data)
+            self.distance.fit(data, jobs=jobs, chunksize=chunksize)
 
     def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int, chunksize: int,
                           batch_size: int):
@@ -129,7 +129,7 @@ class ComparativeEncoder:
         @param silent: whether to suppress output.
         """
         distance_on = distance_on if distance_on is not None else data
-        self._fit_distance(distance_on)
+        self._fit_distance(distance_on, jobs, chunksize)
         epoch = lambda: self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
 
         for i in range(epochs):
