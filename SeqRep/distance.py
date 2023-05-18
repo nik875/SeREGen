@@ -69,8 +69,8 @@ class Euclidean(Distance):
         """
         super().fit(data)  # Update self.fit_called
         rng = np.random.default_rng()
-        a = rng.permutation(data)[:sample_size]
-        b = rng.permutation(data)[:sample_size]
+        a = rng.choice(data, sample_size)
+        b = rng.choice(data, sample_size)
         tups = zip(a, b)
         with mp.Pool(jobs) as p:
             result = np.fromiter(tqdm(p.imap_unordered(_euclidean_dist_tup, tups, chunksize=chunksize),
