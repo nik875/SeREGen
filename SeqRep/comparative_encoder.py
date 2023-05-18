@@ -76,14 +76,6 @@ class ComparativeEncoder:
         model = obj.compile(**compile_params)
         return cls(model, dist=dist, strategy=obj.strategy)
 
-    def _fit_distance(self, data: np.ndarray, jobs: int, chunksize: int):
-        """
-        Checks self.distance.fit_called. If false, calls fit on data.
-        @param data: data to fit to if needed.
-        """
-        if not self.distance.fit_called:
-            self.distance.fit(data, jobs=jobs, chunksize=chunksize)
-
     def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int, chunksize: int,
                           batch_size: int):
         """
@@ -117,7 +109,7 @@ class ComparativeEncoder:
         self.comparative_model.fit(train_data, epochs=1)
 
     def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1,
-            fit_jobs=1, fit_chunksize=1, silent=False):
+            silent=False):
         """
         Fit the ComparativeEncoder to the given data.
         @param data: np.ndarray to train on.
@@ -128,12 +120,9 @@ class ComparativeEncoder:
         @param epochs: epochs to train for.
         @param jobs: number of CPU jobs to use for distance calculations (these are not GPU optimized).
         @param chunksize: chunksize for Python multiprocessing.
-        @param fit_jobs: like jobs, but for distance fitting.
-        @param fit_chunksize: like chunksize, but for distance fitting.
         @param silent: whether to suppress output.
         """
         distance_on = distance_on if distance_on is not None else data
-        self._fit_distance(distance_on, fit_jobs, fit_chunksize)
         epoch = lambda: self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
 
         for i in range(epochs):
@@ -156,7 +145,6 @@ class ComparativeEncoder:
         @param batch_size: Batch size for .predict(), not required if not using progress.
         @return np.ndarray: Representations for all sequences in data.
         """
-        self._fit_distance(data, 1, 1)
         if progress:
             return self.encoder.predict(data)
         return self.encoder(data, batch_size=batch_size)
@@ -180,3 +168,4 @@ class ComparativeEncoder:
         with tf.keras.utils.custom_object_scope(custom_objects):
             embeddings = tf.keras.models.load_model(path)
         return cls(embeddings, dist)
+

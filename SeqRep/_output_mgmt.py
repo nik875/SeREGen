@@ -6,3 +6,4 @@ def suppress_output(func: callable):
         with contextlib.redirect_stderr(devnull):
             with contextlib.redirect_stdout(devnull):
                 return func()
+

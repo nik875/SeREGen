@@ -104,7 +104,7 @@ class ModelBuilder:
             for _ in range(depth):
                 self.current = tf.keras.layers.Dense(size, activation=activation, **kwargs)(self.current)
 
-    def embeddings(self, size: int, activation='relu', **kwargs):  # TODO: USE ACTUAL EMBEDDING LAYER
+    def embeddings(self, size: int, activation='relu', **kwargs):
         """
         Expand dimensions and create `size` embeddings.
         @param size: size of embeddings

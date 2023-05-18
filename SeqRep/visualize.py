@@ -6,7 +6,7 @@ from scipy import stats, spatial
 from .dataset_builder import Dataset
 
 
-def repr_scatterplot(reprs: np.ndarray, title=None, alpha=1, marker='o', figsize=(8, 6), savepath=None):
+def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='o', figsize=(8, 6), savepath=None):
     """
     Create a simple scatterplot of sequence representations.
     Suggested alpha for SILVA dataset representations: .05
@@ -27,14 +27,14 @@ def repr_scatterplot(reprs: np.ndarray, title=None, alpha=1, marker='o', figsize
     plt.show()
 
 
-def reprs_by_taxa(reprs: np.ndarray, ds: Dataset, level: typing.Union[str, int], title: str,
+def reprs_by_label(reprs: np.ndarray, ds: Dataset, label: typing.Union[str, int], title: str,
                   alpha=.3, marker='o', filter=None, savepath=None, mask=None, **kwargs):
     """
-    Scatterplot of representations colored by taxa at a particular level. Precondition: bad headers
+    Scatterplot of representations colored by the values of a given label. Precondition: bad headers
     have been dropped.
     @param reprs: sequence representations
     @param ds: dataset object with header data
-    @param level: taxonomic level to plot down to, passed as either an int index or string name
+    @param label: label to plot, passed as either an int index or string name
     @param title: plot title
     @param alpha: alpha value for plotted points
     @param marker: marker symbol
@@ -44,17 +44,18 @@ def reprs_by_taxa(reprs: np.ndarray, ds: Dataset, level: typing.Union[str, int],
     """
     if mask is not None:
         reprs, ds = reprs[mask], ds.loc[mask]
-    tax = np.stack(ds['tax'], axis=0)
+    tax = np.stack(ds['labels'], axis=0)
 
-    level_idx = level if isinstance(level, int) else ds['tax'].index_of_level(level)
-    assert level_idx != -1
+    label_idx = label if isinstance(label, int) else ds['labels'].index_of_label(label)
+    if label_idx == -1:
+        raise ValueError('Given label not in dataset!')
 
-    unique_taxa, counts = np.unique(tax[:, level_idx], return_counts=True)
+    unique_taxa, counts = np.unique(tax[:, label_idx], return_counts=True)
     plottable_taxa = unique_taxa if not filter else unique_taxa[counts > filter]
-    plottable = np.isin(tax[:, level_idx], plottable_taxa)
+    plottable = np.isin(tax[:, label_idx], plottable_taxa)
     to_plot = np.zeros((np.nonzero(plottable)[0].shape[0], plottable_taxa.shape[0]))
     for i in range(len(plottable_taxa)):
-        to_plot[tax[plottable][:, level_idx] == plottable_taxa[i], i] = 1
+        to_plot[tax[plottable][:, label_idx] == plottable_taxa[i], i] = 1
     plottable_seqs = reprs[plottable]
 
     fig = plt.figure(figsize=(8, 6))
@@ -74,43 +75,3 @@ def reprs_by_taxa(reprs: np.ndarray, ds: Dataset, level: typing.Union[str, int],
         plt.savefig(savepath)
     plt.show()
 
-
-def comparative_scatter(data: list[tuple], title=None, marker='o', figsize=(8, 6),
-                        sample_size=None, savepath=None):
-    rng = np.random.default_rng()
-    fig = plt.figure(figsize=figsize)
-    ax = fig.add_subplot(111)
-
-    for group in data:
-        ingroup = group[1][rng.integers(0, len(group[1]), sample_size)] if sample_size else data[1]
-        outgroup = np.concatenate([i[1] for i in data if i[0] != group[0]])
-        outgroup = outgroup[rng.integers(0, len(outgroup), sample_size)] if sample_size else outgroup
-        distances_from_outgroup = spatial.distance_matrix(ingroup, outgroup)
-        avg_from_outgroup = distances_from_outgroup.mean(axis=0)
-        distances_from_ingroup = spatial.distance_matrix(ingroup, ingroup)
-        avg_from_ingroup = distances_from_ingroup.mean(axis=0)
-
-        outgroup_zscores = -1 * stats.zscore(avg_from_outgroup)
-        outgroup_norm = outgroup_zscores / 3 + .5
-        outgroup_norm = np.vectorize(lambda i: min(max(i, 0), 1))(outgroup_norm)
-
-        ingroup_zscores = stats.zscore(avg_from_ingroup)
-        ingroup_norm = ingroup_zscores / 3 + .5
-        ingroup_norm = np.vectorize(lambda i: min(max(i, 0), 1))(ingroup_norm)
-
-        alphas = (4 * outgroup_norm + ingroup_norm) / 5
-        alphas = alphas / (sample_size ** (1 / 4))
-
-        x = ingroup[:, 0]
-        y = ingroup[:, 1]
-        ax.scatter(x, y, alpha=alphas, marker=marker)
-
-    if title:
-        ax.set_title(title)
-    leg = plt.legend([i[0] for i in data], markerscale=1, borderpad=1)
-    for lh in leg.legendHandles:
-        lh.set_alpha(1)
-
-    if savepath:
-        plt.savefig(savepath)
-    plt.show()

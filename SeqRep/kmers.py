@@ -17,15 +17,14 @@ class KMerCounter:
         self.chunksize = chunksize
         self.alphabet = np.array(['A', 'C', 'G', 'T', 'U'])
         self.alphabet_pattern = re.compile(f'[^{"".join(self.alphabet)}]')
-        alphabet_view = self.alphabet.view(np.int32)
 
         # Make a lookup table with an entry for every possible data byte
         self.lookup_table = np.zeros(256, dtype=np.uint32)
-        self.lookup_table[alphabet_view[0]] = 0
-        self.lookup_table[alphabet_view[1]] = 1
-        self.lookup_table[alphabet_view[2]] = 2
-        self.lookup_table[alphabet_view[3]] = 3
-        self.lookup_table[alphabet_view[4]] = 3  # U = T
+        # A = 0 is implied by np.zeros
+        self.lookup_table[ord('C')] = 1
+        self.lookup_table[ord('G')] = 2
+        self.lookup_table[ord('T')] = 3
+        self.lookup_table[ord('U')] = 3  # U = T
 
     def _split_str(self, seq: str) -> list[str]:
         """
@@ -101,7 +100,7 @@ class KMerCounter:
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         """
         return self._gen_kmers(seqs, self.str_to_kmer_counts, quiet, not self.debug)
-    
+
     def _ohe_seq(self, seq: np.ndarray) -> np.ndarray:
         """
         One-hot encode a numerical sequence.
