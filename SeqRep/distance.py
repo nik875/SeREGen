@@ -45,15 +45,6 @@ class Distance:
         return data
 
 
-class _RandomDistanceCalculator:
-    def __init__(self, data: np.ndarray):
-        self.data = data
-        self.rng = np.random.default_rng()
-
-    def gen(self, _) -> float:
-        return euclidean(self.rng.choice(self.data), self.rng.choice(self.data))
-
-
 class Euclidean(Distance):
     """
     Normalized Euclidean distance implementation between two arrays of numbers.
@@ -73,9 +64,11 @@ class Euclidean(Distance):
         distance calculation before generating mean, std, and min_val parameters.
         """
         super().fit(data)  # Update self.fit_called
-        calculator = _RandomDistanceCalculator(data)
+        a = np.permutation(data)[:sample_size]
+        b = np.permutation(data)[:sample_size]
+        tups = zip(a, b)
         with mp.Pool(jobs) as p:
-            result = np.fromiter(tqdm(p.imap_unordered(calculator.gen, range(sample_size), chunksize=chunksize),
+            result = np.fromiter(tqdm(p.imap_unordered(euclidean, tups, chunksize=chunksize),
                                       total=sample_size), dtype=np.float)
         # Reduce bias by trimming all zscores more than self.max_zscore_dev away from mean
         mask = np.logical_and(zscores > -1 * self.max_zscore_dev, zscores < self.max_zscore_dev)

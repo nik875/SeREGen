@@ -91,7 +91,7 @@ class ComparativeEncoder:
         @param data: data to train model on.
         @param distance_on: data to use for distance computations.
         @param jobs: number of CPU jobs to use.
-        @param chunksize: chunksize for Python multiprocessing
+        @param chunksize: chunksize for Python multiprocessing.
         @param batch_size: batch size for TensorFlow.
         """
         rng = np.random.default_rng()
@@ -116,7 +116,8 @@ class ComparativeEncoder:
 
         self.comparative_model.fit(train_data, epochs=1)
 
-    def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1, silent=False):
+    def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1,
+            fit_jobs=1, fit_chunksize=1, silent=False):
         """
         Fit the ComparativeEncoder to the given data.
         @param data: np.ndarray to train on.
@@ -126,10 +127,13 @@ class ComparativeEncoder:
         @param batch_size: batch size for TensorFlow.
         @param epochs: epochs to train for.
         @param jobs: number of CPU jobs to use for distance calculations (these are not GPU optimized).
+        @param chunksize: chunksize for Python multiprocessing.
+        @param fit_jobs: like jobs, but for distance fitting.
+        @param fit_chunksize: like chunksize, but for distance fitting.
         @param silent: whether to suppress output.
         """
         distance_on = distance_on if distance_on is not None else data
-        self._fit_distance(distance_on, jobs, chunksize)
+        self._fit_distance(distance_on, fit_jobs, fit_chunksize)
         epoch = lambda: self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
 
         for i in range(epochs):
