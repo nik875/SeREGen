@@ -64,8 +64,9 @@ class Euclidean(Distance):
         distance calculation before generating mean, std, and min_val parameters.
         """
         super().fit(data)  # Update self.fit_called
-        a = np.permutation(data)[:sample_size]
-        b = np.permutation(data)[:sample_size]
+        rng = np.random.default_rng()
+        a = rng.permutation(data)[:sample_size]
+        b = rng.permutation(data)[:sample_size]
         tups = zip(a, b)
         with mp.Pool(jobs) as p:
             result = np.fromiter(tqdm(p.imap_unordered(euclidean, tups, chunksize=chunksize),
