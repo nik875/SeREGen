@@ -21,7 +21,7 @@ class Distance:
         # that fit has not been called and automatically call fit whenever it receives data.
         self.fit_called = False
 
-    def fit(self, data):
+    def fit(self, data, **kwargs):
         """
         Fit the distance metric to the given data. Does nothing by default.
         @param data: data to fit to
