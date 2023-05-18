@@ -156,14 +156,10 @@ class ComparativeEncoder:
         @param batch_size: Batch size for .predict(), not required if not using progress.
         @return np.ndarray: Representations for all sequences in data.
         """
-        dataset = tf.data.Dataset.from_tensor_slices(data)
-        options = tf.data.Options()
-        options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
-        dataset.with_options(options)
         self._fit_distance(data, 1, 1)
         if progress:
-            return self.encoder.predict(dataset, batch_size=batch_size)
-        return self.encoder(dataset)
+            return self.encoder.predict(data)
+        return self.encoder(data, batch_size=batch_size)
 
     def save(self, path: str):
         """
