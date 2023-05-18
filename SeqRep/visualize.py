@@ -26,9 +26,9 @@ def repr_scatterplot(reprs: np.ndarray, title=None, alpha=1, marker='o', figsize
         plt.savefig(savepath)
     plt.show()
 
-    
+
 def reprs_by_taxa(reprs: np.ndarray, ds: Dataset, level: typing.Union[str, int], title: str,
-                  alpha=.3, filter=None, savepath=None, mask=None):
+                  alpha=.3, marker='o', filter=None, savepath=None, mask=None, **kwargs):
     """
     Scatterplot of representations colored by taxa at a particular level. Precondition: bad headers
     have been dropped.
@@ -37,6 +37,7 @@ def reprs_by_taxa(reprs: np.ndarray, ds: Dataset, level: typing.Union[str, int],
     @param level: taxonomic level to plot down to, passed as either an int index or string name
     @param title: plot title
     @param alpha: alpha value for plotted points
+    @param marker: marker symbol
     @param filter: minimum number of sequences for a category to be plotted
     @param savepath: path to save to
     @param mask: boolean mask to apply to all arrays
@@ -63,7 +64,7 @@ def reprs_by_taxa(reprs: np.ndarray, ds: Dataset, level: typing.Union[str, int],
         pop = plottable_seqs[i.astype(bool)]
         samp = rng.integers(0, len(pop), 1000)
         x, y = zip(*pop[samp])
-        ax.scatter(x, y, alpha=alpha, marker='o')
+        ax.scatter(x, y, alpha=alpha, marker=marker, **kwargs)
     ax.set_title(title)
     leg = plt.legend(plottable_taxa, markerscale=1, borderpad=1)
 
