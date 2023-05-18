@@ -13,16 +13,16 @@ class OneHotEncoder:
         self.lookup_table = np.full((256,), self.unk_val, dtype=np.uint32)  # Create a lookup table for base pair bytes
         self.lookup_table[alphabet_view] = list(self.alphabet.values())
         self.arr_size = self.unk_val + 1
-    
+
     def _encode_seq(self, seq: np.ndarray) -> np.ndarray:
         result = np.zeros((len(seq), self.arr_size))
         enc = self.lookup_table[seq]
         result[np.arange(len(seq)), enc] = 1
         return result
-    
+
     def encode_str(self, seq: str) -> np.ndarray:
         return self._encode_seq(np.array([seq]).view(np.uint32))
-    
+
     def encode_seqs(self, seqs: list[str], trim_to=None, quiet=False) -> list[np.ndarray]:
         if trim_to is None and not all(len(i) == len(seqs[0]) for i in seqs):
             with mp.Pool(self.jobs) as p:
