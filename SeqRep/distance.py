@@ -75,7 +75,6 @@ class Euclidean(Distance):
         with mp.Pool(jobs) as p:
             result = np.fromiter(tqdm(p.imap_unordered(_euclidean_dist_tup, tups, chunksize=chunksize),
                                       total=sample_size), dtype=np.float)
-        print(result.mean(), result.std())
         zscores = stats.zscore(result)  # Z-score is the simplest normalization for a normal distribution
         # Reduce bias by trimming all zscores more than self.max_zscore_dev away from mean
         mask = np.logical_and(zscores > -1 * self.max_zscore_dev, zscores < self.max_zscore_dev)
