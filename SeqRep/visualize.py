@@ -6,7 +6,7 @@ from scipy import stats, spatial
 from .dataset_builder import Dataset
 
 
-def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='o', figsize=(8, 6), savepath=None):
+def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='.', figsize=(8, 6), savepath=None):
     """
     Create a simple scatterplot of sequence representations.
     Suggested alpha for SILVA dataset representations: .05
@@ -28,7 +28,7 @@ def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='o', figsiz
 
 
 def reprs_by_label(reprs: np.ndarray, ds: Dataset, label: typing.Union[str, int], title: str,
-                  alpha=.3, marker='o', filter=None, savepath=None, mask=None, **kwargs):
+                  alpha=.1, marker='.', filter=None, savepath=None, mask=None, **kwargs):
     """
     Scatterplot of representations colored by the values of a given label. Precondition: bad headers
     have been dropped.
@@ -44,7 +44,7 @@ def reprs_by_label(reprs: np.ndarray, ds: Dataset, label: typing.Union[str, int]
     """
     if mask is not None:
         reprs, ds = reprs[mask], ds.loc[mask]
-    tax = np.stack(ds['labels'], axis=0)
+    tax = np.stack(ds['labels'])
 
     label_idx = label if isinstance(label, int) else ds['labels'].index_of_label(label)
     if label_idx == -1:

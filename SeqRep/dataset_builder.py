@@ -141,7 +141,7 @@ class Dataset(pd.DataFrame):
         Drop all elements which have a header of the wrong length. Returns new DataFrame.
         """
         assert self['labels'] is not None
-        return self.loc[self['labels'].correct_length_mask()]
+        return self.loc[self['labels'].correct_length_mask()].dropna()
 
     def length_dist(self, progress=True):
         """
@@ -157,7 +157,7 @@ class Dataset(pd.DataFrame):
         @param length: length to trim to.
         """
         trimmer = _SequenceTrimmer(length)
-        self.loc['seqs'] = self['orig_seqs'].apply(trimmer.trim)
+        self['seqs'] = self['orig_seqs'].apply(trimmer.trim)
 
     @staticmethod
     def _encode_sequence(seq: str) -> np.ndarray:
