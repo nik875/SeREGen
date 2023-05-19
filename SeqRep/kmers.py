@@ -99,7 +99,7 @@ class KMerCounter:
         Generate kmer counts for a given array of string sequences.
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         """
-        return self._gen_kmers(seqs, self.str_to_kmer_counts, quiet, not self.debug)
+        return np.array(self._gen_kmers(seqs, self.str_to_kmer_counts, quiet, not self.debug))
 
     def _ohe_seq(self, seq: np.ndarray) -> np.ndarray:
         """
