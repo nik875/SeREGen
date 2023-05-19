@@ -39,7 +39,7 @@ class LabelSeries(pd.Series):
         @param value: search query
         @return pd.Series: boolean mask
         """
-        level = self.labels.index(label) if isinstance(label, str) else label
+        label = self.labels.index(label) if isinstance(label, str) else label
         if label == -1:
             raise ValueError('Label not in dataset!')
         return self.apply(lambda i: i[label] == value)
