@@ -157,7 +157,7 @@ class Dataset(pd.DataFrame):
         @param length: length to trim to.
         """
         trimmer = _SequenceTrimmer(length)
-        self['seqs'] = self['orig_seqs'].apply(trimmer.trim)
+        self.loc['seqs'] = self.loc['orig_seqs'].apply(trimmer.trim)
 
     @staticmethod
     def _encode_sequence(seq: str) -> np.ndarray:
