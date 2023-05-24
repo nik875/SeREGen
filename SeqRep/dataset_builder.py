@@ -186,14 +186,14 @@ class Dataset(pd.DataFrame):
         counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
         return counter.kmer_sequences_ohe(self['seqs'].to_numpy(), trim_to=trim_to, quiet=not progress)
 
-    def count_kmers(self, K: int, jobs=1, chunksize=1, progress=True) -> list:
+    def count_kmers(self, K: int, jobs=1, chunksize=1, progress=True) -> np.ndarray:
         """
         Count kmers for all sequences.
         @param K: Length of sequences to match.
         @param jobs: number of multiprocessing jobs
         @param chunksize: chunksize for multiprocessing
         @param progress: optional progress bar
-        @return list: counts of each kmer for all sequences
+        @return np.ndarray: counts of each kmer for all sequences
         """
         counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
         return counter.kmer_counts(self['seqs'].to_numpy(), quiet=not progress)
