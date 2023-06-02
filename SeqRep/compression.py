@@ -125,13 +125,14 @@ def count_kmers_mp(K: int, comp: Compressor, ds: Dataset, jobs=1, chunksize=1,
         return np.array(list(it))
 
 
-def count_kmers_batched(K: int, comp: Compressor, ds: Dataset, batch_size=1,
+def count_kmers_batched(K: int, comp: Compressor, ds: Dataset, batch_size=None,
                         jobs=1, chunksize=1, progress=True) -> np.ndarray:
     """
     Count K-Mers for all sequences in given Dataset, automatically applying compression in a batched
     fashion. Intended for use with AECompressor.
     """
     counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
+    batch_size = batch_size or len(ds)
     full_batches = len(ds) // batch_size
     encodings = []
     for i in (tqdm(range(full_batches)) if progress else range(full_batches)):
