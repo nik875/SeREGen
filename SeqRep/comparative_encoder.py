@@ -1,3 +1,6 @@
+"""
+ComparativeEncoder module, trains a model comparatively using distances.
+"""
 import time
 import multiprocessing as mp
 
@@ -29,12 +32,9 @@ def correlation_coefficient_loss(y_true, y_pred):
 
 class DistanceLayer(tf.keras.layers.Layer):
     """
-    This layer computes the distance between its two prior layers. Necessary for a comparative model.
+    This layer computes the distance between its two prior layers. Necessary for comparative models.
     """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
+    # pylint: disable=missing-function-docstring
     def call(self, a, b):
         return tf.reduce_sum(tf.square(a - b), -1)
 
@@ -76,8 +76,8 @@ class ComparativeEncoder:
         model = obj.compile(**compile_params)
         return cls(model, dist=dist, strategy=obj.strategy)
 
-    def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int, chunksize: int,
-                          batch_size: int):
+    def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int,
+                          chunksize: int, batch_size: int):
         """
         Train a single randomized epoch on data and distance_on.
         @param data: data to train model on.
@@ -95,35 +95,37 @@ class ComparativeEncoder:
         y2 = distance_on[p2]
 
         with mp.Pool(jobs) as p:
-            y = np.array(list(tqdm(p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize),
-                                   total=y1.shape[0])))
+            y = np.array(list(tqdm(p.imap(self.distance.transform, zip(y1, y2),
+                                          chunksize=chunksize), total=y1.shape[0])))
         y = self.distance.postprocessor(y)  # Additional transformations are applied here
 
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
         train_data = train_data.batch(batch_size)
 
         options = tf.data.Options()
+        # pylint: disable=line-too-long
         options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
         train_data = train_data.with_options(options)
 
         self.comparative_model.fit(train_data, epochs=1)
 
-    def fit(self, data: np.ndarray, distance_on=None, batch_size=10, epochs=10, jobs=1, chunksize=1,
-            silent=False):
+    def fit(self, data: np.ndarray, distance_on=None, batch_size=100, epochs=10, jobs=1,
+            chunksize=1, silent=False):
         """
         Fit the ComparativeEncoder to the given data.
         @param data: np.ndarray to train on.
-        @param distance_on: np.ndarray of data to use for distance computations. Allows for distance to be
-        based on secondary properties of each sequence, or on a string representation of the sequence
-        (e.g. for alignment comparison methods).
+        @param distance_on: np.ndarray of data to use for distance computations. Allows for distance
+        to be based on secondary properties of each sequence, or on a string representation of the
+        sequence (e.g. for alignment comparison methods).
         @param batch_size: batch size for TensorFlow.
         @param epochs: epochs to train for.
-        @param jobs: number of CPU jobs to use for distance calculations (these are not GPU optimized).
+        @param jobs: number of CPU jobs to use for distance calculations (not GPU optimized).
         @param chunksize: chunksize for Python multiprocessing.
         @param silent: whether to suppress output.
         """
         distance_on = distance_on if distance_on is not None else data
-        epoch = lambda: self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
+        def epoch():
+            return self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
 
         for i in range(epochs):
             start = time.time()
@@ -134,14 +136,14 @@ class ComparativeEncoder:
                 epoch()
                 print(f'Epoch time: {time.time() - start}')
 
-    def transform(self, data: np.ndarray, progress=True, batch_size=10) -> np.ndarray:
+    def transform(self, data: np.ndarray, progress=True, batch_size=100) -> np.ndarray:
         """
         Transform the given data into representations using trained model.
 
         @param data: np.ndarray containing all sequences to transform.
-        @param progress: Shows a progress bar. Using progress=True slows down execution due to batching
-        in TensorFlow's .predict() as opposed to .__call__(). batch_size argument is also required for
-        this feature.
+        @param progress: Shows a progress bar. progress=True slows down execution due to batching
+        in TensorFlow's .predict() as opposed to .__call__(). batch_size argument is also required
+        for this feature.
         @param batch_size: Batch size for .predict(), not required if not using progress.
         @return np.ndarray: Representations for all sequences in data.
         """

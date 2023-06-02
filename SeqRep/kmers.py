@@ -1,14 +1,21 @@
+"""
+KMer library that handles KMer counting and KMer sequence encoding.
+"""
 import re
-import numpy as np
 import multiprocessing as mp
-from tqdm import tqdm as tqdm
+import numpy as np
+from tqdm import tqdm
 
 
 class KMerCounter:
+    """
+    KMer Counter class that can convert DNA/RNA sequences into sequences of kmers or kmer
+    frequency tables. Wraps logic for Python multiprocessing using jobs and chunksize.
+    """
     def __init__(self, k: int, jobs=1, chunksize=1, debug=False):
         """
-        KMer Counter class that can convert DNA/RNA sequences into sequences of kmers or kmer frequency tables.
-        Wraps logic for Python multiprocessing using jobs and chunksize.
+        KMer Counter class that can convert DNA/RNA sequences into sequences of kmers or kmer
+        frequency tables. Wraps logic for Python multiprocessing using jobs and chunksize.
         @param debug: disables multiprocessing to allow better tracebacks.
         """
         self.k = k
@@ -40,13 +47,15 @@ class KMerCounter:
         Convert a sequence of base pair bytes to a sequence of integer kmers.
         SEQ MUST NOT HAVE BASE PAIRS OUTSIDE OF ACGT/U!
         """
-        binary_converted = self.lookup_table[seq]  # Convert seq to integers based on encoding scheme
+        binary_converted = self.lookup_table[seq]  # Convert seq to integers
         stride = np.lib.stride_tricks.sliding_window_view(binary_converted, self.k)
-        # If every base pair is assigned a unique two-bit code, a kmer is simply the concatenation of these codes
-        # In other words, kmer = sum(val << (kmer_len - idx) * 2 for idx, val in kmer_window) where val is a 2-bit sequence
+        # If every base pair is a unique two-bit code, a kmer is the concatenation of these codes
+        # In other words, kmer = sum(val << (kmer_len - idx) * 2 for idx, val in kmer_window)
+        # where val is a 2-bit sequence
         kmers = np.copy(stride[:, -1])  # Start with a new array to store the sum
         for i in range(stride.shape[1] - 2, -1, -1):  # Iterate over columns in reverse
-            kmers += stride[:, i] << (stride.shape[1] - i - 1) * 2  # Add this column << (kmer_len - idx) * 2 to sum
+        # Add this column << (kmer_len - idx) * 2 to sum
+            kmers += stride[:, i] << (stride.shape[1] - i - 1) * 2
         return kmers
 
     def str_to_kmers(self, seq: str) -> np.ndarray:
@@ -120,6 +129,7 @@ class KMerCounter:
         assert all(len(i) >= trim_to for i in kmers)
         kmers = np.stack([i[:trim_to] for i in kmers])
         result = np.zeros((*kmers.shape, 4 ** self.k))
-        indices = np.concatenate(np.array(np.meshgrid(np.arange(kmers.shape[0]), np.arange(kmers.shape[1]))).T)
+        indices = np.concatenate(np.array(np.meshgrid(np.arange(kmers.shape[0]),
+                                                      np.arange(kmers.shape[1]))).T)
         result[indices[:, 0], indices[:, 1], kmers.flatten()] = 1
         return result

@@ -1,4 +1,6 @@
+import multiprocessing as mp
 import numpy as np
+from tqdm import tqdm
 import tensorflow as tf
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
@@ -7,10 +9,21 @@ from .kmers import KMerCounter
 
 
 class Compressor:
+    """
+    Abstract Compressor class used for compressing input data.
+    """
     def fit(self, data: np.ndarray):
-        pass
+        """
+        Fit the compressor to the given data.
+        @param data: data to fit to.
+        """
 
     def compress(self, data: np.ndarray) -> np.ndarray:
+        """
+        Compress the given data.
+        @param data: data to compress.
+        @return np.ndarray: compressed data.
+        """
         return data
 
 
@@ -45,7 +58,7 @@ class AECompressor(Compressor):
         x = tf.keras.layers.Dense(data.shape[-1], activation='relu')(reprs)
         outputs = tf.keras.layers.Dense(data.shape[-1],
                                         activation=output_activation)
-        return cls(iinputs, reprs, outputs, loss=loss)
+        return cls(inputs, reprs, outputs, loss=loss)
 
     def summary(self):
         self.ae.summary()
@@ -77,8 +90,8 @@ def count_kmers_mp(K: int, comp: Compressor, ds: Dataset, jobs=1, chunksize=1,
     if debug:
         return np.array([obj.count_kmers(i) for i in tqdm(ds['seqs'])])
     with mp.Pool(jobs) as p:
-        it = tqdm(p.imap(obj.count_kmers, ds['seqs']), total=len(ds)) \
-            if progress else p.imap(obj.count_kmers, ds['seqs'])
+        it = tqdm(p.imap(obj.count_kmers, ds['seqs'], chunksize=chunksize), total=len(ds)) \
+            if progress else p.imap(obj.count_kmers, ds['seqs'], chunksize=chunksize)
         return np.array(list(it))
 
 

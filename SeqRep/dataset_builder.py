@@ -1,6 +1,5 @@
 import typing
 import matplotlib.pyplot as plt
-import multiprocessing as mp
 
 import numpy as np
 import pandas as pd
@@ -74,7 +73,7 @@ class DatasetBuilder:
         return np.array(headers), np.array(seqs)
 
     @staticmethod
-    def _dataset_decorator(cls):
+    def _dataset_decorator(cls_type):
         class DatasetDecorated(Dataset):
             @property
             def _constructor(self):
@@ -82,12 +81,13 @@ class DatasetBuilder:
 
             @property
             def _constructor_sliced(self):
-                return cls
+                return cls_type
         return DatasetDecorated
 
     def from_fasta(self, paths: list[str]):
         """
-        Factory function that builds a dataset from a fasta file. Reads in all sequences from all fasta files in list.
+        Factory function that builds a dataset from a fasta file. Reads in all sequences from all
+        fasta files in list.
         @param paths: list of fasta file paths.
         @return dataset: new dataset object
         """
@@ -113,7 +113,8 @@ class Dataset(pd.DataFrame):
     """
     Useful class for handling sequence data. Underlying storage container is a pandas DataFrame.
     Columns:
-    orig_seqs: raw, unprocessed sequence data. acts like a "backup" when performing transformations on sequences.
+    orig_seqs: raw, unprocessed sequence data. acts like a "backup" when performing transformations
+    on sequences.
     seqs: sequences that can be transformed by built-in functions
     raw_headers: raw, unprocessed header data.
     labels: label data, present only if HeaderParser passed to DatasetBuilder or if manually added
@@ -124,8 +125,8 @@ class Dataset(pd.DataFrame):
 
     def add_labels(self, lbl_rows: pd.Series, lbl_cols: list[str]):
         """
-        Add label data to the dataframe after dataset creation. Allows for other methods of label parsing.
-        Returns a new Dataset with label data added.
+        Add label data to the dataframe after dataset creation. Allows for other methods of label
+        parsing. Returns a new Dataset with label data added.
         @param lbl_rows: _LabelSeries column.
         @param lbl_cols: list of labels represented by each index.
         @return Dataset: subclass of Dataset with label data added.
@@ -145,7 +146,8 @@ class Dataset(pd.DataFrame):
 
     def length_dist(self, progress=True):
         """
-        Plots a histogram of the sequence lengths in this dataset. Helpful for selecting a trim length.
+        Plots a histogram of the sequence lengths in this dataset.
+        Helpful for selecting a trim length.
         @param progress: show progress bar during length calculations
         """
         plt.hist(self['seqs'].progress_apply(len) if progress else self['seqs'].apply(len))
@@ -184,7 +186,8 @@ class Dataset(pd.DataFrame):
         Convert all sequences to one-hot encoded kmer sequences.
         """
         counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
-        return counter.kmer_sequences_ohe(self['seqs'].to_numpy(), trim_to=trim_to, quiet=not progress)
+        return counter.kmer_sequences_ohe(self['seqs'].to_numpy(), trim_to=trim_to,
+                                          quiet=not progress)
 
     def count_kmers(self, K: int, jobs=1, chunksize=1, progress=True) -> np.ndarray:
         """
@@ -200,12 +203,17 @@ class Dataset(pd.DataFrame):
 
 
 class HeaderParser:
+    """
+    HeaderParser class that can be extended to parse headers from FASTA files into labels.
+    """
     def __init__(self, label_extractor: callable, label_cols: list[str]):
         """
-        It's easily possible to create a new custom HeaderParser with a custom label_extractor function
-        and a custom label_cols list. No subclassing necessary.
-        @param label_extractor: function that takes in a raw header string and outputs a list of labels.
-        @param label_cols: list of strings that store what each position in the label list represents.
+        It's easily possible to create a new custom HeaderParser with a custom label_extractor
+        function and a custom label_cols list. No subclassing necessary.
+        @param label_extractor: function that takes in a raw header string and outputs a list of
+        labels.
+        @param label_cols: list of strings that store what each position in the label list
+        represents.
         """
         self.label_extractor = label_extractor
         self.label_cols = label_cols
@@ -213,7 +221,8 @@ class HeaderParser:
     @staticmethod
     def _lbl_series_decorator(label_cols: list[str]) -> type:
         """
-        Hidden decorator function that returns a subclass of LabelSeries with the 'labels' attribute defined.
+        Hidden decorator function that returns a subclass of LabelSeries with the 'labels' attribute
+        defined.
         @param label_cols: list of labels
         """
         class LabelSeriesDecorated(LabelSeries):
@@ -244,10 +253,11 @@ class SILVAHeaderParser(HeaderParser):
         """
         def tax_extractor(header: str):
             return np.array(' '.join(header.split(' ')[1:]).split(';'))
-        super().__init__(tax_extractor, ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species'])
+        super().__init__(tax_extractor, ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus',
+                                         'Species'])
 
 
-class COVIDDataParser(HeaderParser):
+class COVIDHeaderParser(HeaderParser):
     """
     Predefined header parser for COVID nucleotide sequence data downloads from NCBI
     """
