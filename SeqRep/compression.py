@@ -60,7 +60,7 @@ class AECompressor(Compressor):
         self.ae.compile(optimizer='adam', loss=loss)
 
     @classmethod
-    def auto(cls, data: np.ndarray, repr_size: int, output_activation='',
+    def auto(cls, data: np.ndarray, repr_size: int, output_activation=None,
              loss='mse'):
         """
         Automatically generate an autoencoder based on the input data. Recommended way to create
