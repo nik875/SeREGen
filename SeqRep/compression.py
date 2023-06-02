@@ -1,3 +1,6 @@
+"""
+Library for input compression before data is passed into a model.
+"""
 import multiprocessing as mp
 import numpy as np
 from tqdm import tqdm
@@ -28,6 +31,9 @@ class Compressor:
 
 
 class PCACompressor(Compressor):
+    """
+    Use PCA to compress the input data.
+    """
     def __init__(self, n_components: int):
         self.pca = PCA(n_components=n_components)
 
@@ -37,10 +43,13 @@ class PCACompressor(Compressor):
 
     # pylint: disable=unused-argument
     def compress(self, data: np.ndarray, **kwargs) -> np.ndarray:
-        return self.pca.transform(data)
+        return self.pca.transform([data])
 
 
 class AECompressor(Compressor):
+    """
+    Train an autoencoder to compress the input data.
+    """
     def __init__(self, inputs: tf.keras.layers.Layer,
                  reprs: tf.keras.layers.Layer,
                  outputs: tf.keras.layers.Layer,
@@ -53,6 +62,10 @@ class AECompressor(Compressor):
     @classmethod
     def auto(cls, data: np.ndarray, repr_size: int, output_activation='',
              loss='mse'):
+        """
+        Automatically generate an autoencoder based on the input data. Recommended way to create
+        an AECompressor.
+        """
         inputs = tf.keras.layers.Input(data.shape[1:])
         x = tf.keras.layers.Dense(data.shape[-1], activation='relu')(inputs)
         reprs = tf.keras.layers.Dense(repr_size)(x)
@@ -62,6 +75,9 @@ class AECompressor(Compressor):
         return cls(inputs, reprs, outputs, loss=loss)
 
     def summary(self):
+        """
+        Print a summary of this autoencoder.
+        """
         self.ae.summary()
 
     def fit(self, data: np.ndarray, epochs=1, batch_size=1):
@@ -71,6 +87,9 @@ class AECompressor(Compressor):
         return self.encoder.predict(data) if progress else self.encoder(data)
 
     def decode(self, data: np.ndarray, progress=True) -> np.ndarray:
+        """
+        Apply the decoder to transform compressed data back to predicted K-Mer counts.
+        """
         return self.decoder.predict(data) if progress else self.decoder(data)
 
 
@@ -79,6 +98,7 @@ class _KMersMPWrapper:
         self.counter = counter
         self.comp = comp
 
+    # pylint: disable=missing-docstring
     def count_kmers(self, seq: str):
         kmers = self.counter.str_to_kmer_counts(seq)
         return self.comp.compress(kmers, progress=False)
@@ -86,6 +106,10 @@ class _KMersMPWrapper:
 
 def count_kmers_mp(K: int, comp: Compressor, ds: Dataset, jobs=1, chunksize=1,
                    progress=True, debug=False) -> np.ndarray:
+    """
+    Count K-Mers for all sequences in a given Dataset, automatically applying compression using
+    multiprocessing. Intended for use with PCACompressor.
+    """
     counter = KMerCounter(K)
     obj = _KMersMPWrapper(counter, comp)
     if debug:
@@ -98,6 +122,10 @@ def count_kmers_mp(K: int, comp: Compressor, ds: Dataset, jobs=1, chunksize=1,
 
 def count_kmers_batched(K: int, comp: Compressor, ds: Dataset, batch_size=1,
                         jobs=1, chunksize=1, progress=True) -> np.ndarray:
+    """
+    Count K-Mers for all sequences in given Dataset, automatically applying compression in a batched
+    fashion. Intended for use with AECompressor.
+    """
     counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
     full_batches = len(ds) // batch_size
     encodings = []
