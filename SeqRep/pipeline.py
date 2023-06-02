@@ -170,6 +170,8 @@ class KMerCountsPipeline(Pipeline):
         builder.dense(postcomp_len, depth=depth)
         self.model = ComparativeEncoder.from_model_builder(builder, dist=Euclidean(),
                                                            output_dim=repr_size)
+        if not quiet:
+            self.model.summary()
 
     def preprocess_seq(self, seq: str) -> np.ndarray:
         counts = self.counter.str_to_kmer_counts(seq)

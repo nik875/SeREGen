@@ -171,3 +171,9 @@ class ComparativeEncoder:
             embeddings = tf.keras.models.load_model(path)
         return cls(embeddings, dist)
 
+    def summary(self):
+        """
+        Prints a summary of the encoder.
+        """
+        self.encoder.summary()
+
