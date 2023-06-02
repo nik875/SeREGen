@@ -94,10 +94,13 @@ class ComparativeEncoder:
         x2 = data[p2]
         y2 = distance_on[p2]
 
+        print(y1.shape, y2.shape)
+        print(y1[:10])
+        print(self.distance.transform((y1[0], y2[0])))
         with mp.Pool(jobs) as p:
             y = np.array(list(tqdm(p.imap(self.distance.transform, zip(y1, y2),
                                           chunksize=chunksize), total=y1.shape[0])))
-        y = self.distance.postprocessor(y)  # Additional transformations are applied here
+        y = self.distance.postprocessor(y)  # Vectorized transformations are applied here
 
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
         train_data = train_data.batch(batch_size)
