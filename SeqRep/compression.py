@@ -43,7 +43,7 @@ class PCACompressor(Compressor):
 
     # pylint: disable=unused-argument
     def compress(self, data: np.ndarray, **kwargs) -> np.ndarray:
-        return self.pca.transform([data])
+        return self.pca.transform(data)
 
 
 class AECompressor(Compressor):
@@ -101,7 +101,7 @@ class _KMersMPWrapper:
     # pylint: disable=missing-docstring
     def count_kmers(self, seq: str):
         kmers = self.counter.str_to_kmer_counts(seq)
-        return self.comp.compress(kmers, progress=False)
+        return self.comp.compress([kmers], progress=False)[0]
 
 
 def count_kmers_mp(K: int, comp: Compressor, ds: Dataset, jobs=1, chunksize=1,
@@ -113,7 +113,7 @@ def count_kmers_mp(K: int, comp: Compressor, ds: Dataset, jobs=1, chunksize=1,
     counter = KMerCounter(K)
     obj = _KMersMPWrapper(counter, comp)
     if debug:
-        return np.array([obj.count_kmers(i) for i in tqdm(ds['seqs'])])
+        return np.array([obj.count_kmers([i]) for i in tqdm(ds['seqs'])])
     with mp.Pool(jobs) as p:
         it = tqdm(p.imap(obj.count_kmers, ds['seqs'], chunksize=chunksize), total=len(ds)) \
             if progress else p.imap(obj.count_kmers, ds['seqs'], chunksize=chunksize)

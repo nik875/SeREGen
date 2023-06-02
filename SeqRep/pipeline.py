@@ -191,7 +191,7 @@ class KMerCountsPipeline(Pipeline):
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         """
         if not self.quiet:
-            print('Preprocessing entire dataset...')
+            print('Preprocessing dataset...')
         model_input = self.preprocess_seqs(self.dataset['seqs'].to_numpy())
         # For AECompressor, distances between encodings are meaningless
         distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy(), quiet=self.quiet) \
