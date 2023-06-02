@@ -128,7 +128,7 @@ class KMerCountsPipeline(Pipeline):
     """
     Automated pipeline using KMer Counts. Optionally compresses input data before training model.
     """
-    def __init__(self, paths: list[str], K: int, repr_size: int, header_parser='None', quiet=False,
+    def __init__(self, paths: list[str], K: int, repr_size=2, header_parser='None', quiet=False,
                  depth=3, jobs=1, chunksize=1, trim_to=0, compressor=None,
                  compressor_fit_sample_frac=1, comp_repr_size=0, ae_comp_fit_epochs=10,
                  ae_comp_batch_size=100):
