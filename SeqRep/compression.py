@@ -71,7 +71,7 @@ class AECompressor(Compressor):
         reprs = tf.keras.layers.Dense(repr_size)(x)
         x = tf.keras.layers.Dense(data.shape[-1], activation='relu')(reprs)
         outputs = tf.keras.layers.Dense(data.shape[-1],
-                                        activation=output_activation)
+                                        activation=output_activation)(x)
         return cls(inputs, reprs, outputs, loss=loss)
 
     def summary(self):
