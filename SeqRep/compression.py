@@ -35,7 +35,8 @@ class PCACompressor(Compressor):
         data = StandardScaler().fit_transform(data)
         self.pca.fit(data)
 
-    def compress(self, data: np.ndarray) -> np.ndarray:
+    # pylint: disable=unused-argument
+    def compress(self, data: np.ndarray, **kwargs) -> np.ndarray:
         return self.pca.transform(data)
 
 
