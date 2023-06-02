@@ -95,7 +95,7 @@ class Pipeline:
         @param kwargs: Accepts additional keyword arguments for visualize.repr_scatterplot().
         """
         self._reprs_check()
-        repr_scatterplot(np.stack([self.reprs[:, x], self.reprs[:, y]]), **kwargs)
+        repr_scatterplot(np.stack([self.reprs[:, x], self.reprs[:, y]], axis=1), **kwargs)
 
     def visualize_2D(self, **kwargs):
         """
