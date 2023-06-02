@@ -145,7 +145,7 @@ class KMerCountsPipeline(Pipeline):
         r = np.random.default_rng()
         sample = r.permutation(len(self.dataset))[:int(len(self.dataset) //
                                                        compressor_fit_sample_frac)]
-        sample = self.preprocess_seqs(self.dataset['seqs'].to_numpy()[sample])
+        sample = self.counter.kmer_counts(self.dataset['seqs'].to_numpy(), quiet=self.quiet)
         postcomp_len = comp_repr_size or 4 ** K // 10 * 2
         if compressor == 'PCA':
             self.compressor = PCACompressor(postcomp_len)
