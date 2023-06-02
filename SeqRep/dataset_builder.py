@@ -131,6 +131,7 @@ class Dataset(pd.DataFrame):
         @param lbl_cols: list of labels represented by each index.
         @return Dataset: subclass of Dataset with label data added.
         """
+        # pylint: disable=protected-access
         lbl_series_type = HeaderParser._lbl_series_decorator(lbl_cols)
         series = lbl_series_type(lbl_rows)
         dataset_type = DatasetBuilder._dataset_decorator(lbl_series_type)

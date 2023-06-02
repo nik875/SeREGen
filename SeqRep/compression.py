@@ -80,8 +80,13 @@ class AECompressor(Compressor):
         """
         self.ae.summary()
 
-    def fit(self, data: np.ndarray, epochs=1, batch_size=1):
-        self.ae.fit(data, data, epochs=epochs, batch_size=batch_size)
+    def fit(self, data: np.ndarray, epoch_limit=100, batch_size=1, patience=1, val_split=.1):
+        """
+        Train the autoencoder model on the given data. Uses early stopping to end training.
+        """
+        self.ae.fit(data, data, epochs=epoch_limit, batch_size=batch_size, callbacks=[
+            tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience),
+        ], validation_split=val_split)
 
     def compress(self, data: np.ndarray, progress=True) -> np.ndarray:
         return self.encoder.predict(data) if progress else self.encoder(data)

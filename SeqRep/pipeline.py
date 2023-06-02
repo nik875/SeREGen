@@ -130,15 +130,14 @@ class KMerCountsPipeline(Pipeline):
     """
     def __init__(self, paths: list[str], K: int, repr_size=2, header_parser='None', quiet=False,
                  depth=3, jobs=1, chunksize=1, trim_to=0, compressor=None,
-                 compressor_fit_sample_frac=1, comp_repr_size=0, ae_comp_fit_epochs=10,
-                 ae_comp_batch_size=100):
+                 compressor_fit_sample_frac=1, comp_repr_size=0, **ae_fit_args):
         super().__init__(paths, header_parser=header_parser, quiet=quiet)
         if trim_to:  # Optional sequence trimming
             self.dataset.trim_seqs(trim_to)
         self.K = K
         self.jobs = jobs
         self.chunksize = chunksize
-        self.ae_comp_batch_size = ae_comp_batch_size
+        self.ae_batch_size = ae_fit_args['batch_size'] if 'batch_size' in ae_fit_args else None
         self.counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
 
         # Compression (defaults to 80%)
@@ -159,7 +158,7 @@ class KMerCountsPipeline(Pipeline):
                 print('AE Compressor Summary:')
                 self.compressor.summary()
                 print('Training compressor...')
-            self.compressor.fit(sample, epochs=ae_comp_fit_epochs, batch_size=ae_comp_batch_size)
+            self.compressor.fit(sample, **ae_fit_args)
         else:
             postcomp_len = 4 ** K
             self.compressor = Compressor()
@@ -181,9 +180,8 @@ class KMerCountsPipeline(Pipeline):
         if isinstance(self.compressor, PCACompressor):
             return count_kmers_mp(self.K, self.compressor, self.dataset, self.jobs, self.chunksize)
         if isinstance(self.compressor, AECompressor):
-            return count_kmers_batched(self.K, self.compressor, self.dataset,
-                                       self.ae_comp_batch_size, self.jobs, self.chunksize,
-                                       not self.quiet)
+            return count_kmers_batched(self.K, self.compressor, self.dataset, self.ae_batch_size,
+                                       self.jobs, self.chunksize, not self.quiet)
         return self.counter.kmer_counts(seqs, quiet=self.quiet)
 
     def fit(self, **kwargs):
