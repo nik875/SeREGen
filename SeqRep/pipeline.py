@@ -130,7 +130,7 @@ class KMerCountsPipeline(Pipeline):
     """
     def __init__(self, paths: list[str], K: int, repr_size=2, header_parser='None', quiet=False,
                  depth=3, jobs=1, chunksize=1, trim_to=0, compressor=None,
-                 compressor_fit_sample_frac=1, comp_repr_size=0, **ae_fit_args):
+                 comp_fit_sample_frac=1, comp_repr_size=0, **ae_fit_args):
         super().__init__(paths, header_parser=header_parser, quiet=quiet)
         if trim_to:  # Optional sequence trimming
             self.dataset.trim_seqs(trim_to)
@@ -142,7 +142,7 @@ class KMerCountsPipeline(Pipeline):
         # Compression (defaults to 80%)
         r = np.random.default_rng()
         sample = r.permutation(len(self.dataset))[:int(len(self.dataset) *
-                                                       compressor_fit_sample_frac)]
+                                                       comp_fit_sample_frac)]
         sample = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()[sample], quiet=self.quiet)
         postcomp_len = comp_repr_size or 4 ** K // 10 * 2
         if compressor == 'PCA':
