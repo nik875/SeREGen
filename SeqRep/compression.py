@@ -143,5 +143,5 @@ def count_kmers_batched(K: int, comp: Compressor, ds: Dataset, batch_size=None,
     if len(last_batch) > 0:
         kmer_counts = counter.kmer_counts(last_batch.to_numpy(), quiet=True)
         encodings.append(comp.compress(kmer_counts, progress=False))
-    return np.array(encodings)
+    return np.concatenate(encodings)
 
