@@ -137,7 +137,6 @@ class KMerCountsPipeline(Pipeline):
         self.K = K
         self.jobs = jobs
         self.chunksize = chunksize
-        self.ae_batch_size = ae_fit_args['batch_size'] if 'batch_size' in ae_fit_args else None
         self.counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
 
         # Compression (defaults to 80%)
@@ -176,11 +175,11 @@ class KMerCountsPipeline(Pipeline):
         counts = self.counter.str_to_kmer_counts(seq)
         return self.compressor.compress(np.array([counts]))[0]
 
-    def preprocess_seqs(self, seqs: list[str]) -> np.ndarray:
+    def preprocess_seqs(self, seqs: list[str], ae_batch_size=None) -> np.ndarray:
         if isinstance(self.compressor, PCACompressor):
             return count_kmers_mp(self.K, self.compressor, self.dataset, self.jobs, self.chunksize)
         if isinstance(self.compressor, AECompressor):
-            return count_kmers_batched(self.K, self.compressor, self.dataset, self.ae_batch_size,
+            return count_kmers_batched(self.K, self.compressor, self.dataset, ae_batch_size,
                                        self.jobs, self.chunksize, not self.quiet)
         return self.counter.kmer_counts(seqs, quiet=self.quiet)
 
