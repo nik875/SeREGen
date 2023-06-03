@@ -132,7 +132,9 @@ def count_kmers_batched(K: int, comp: Compressor, ds: Dataset, batch_size=None,
     fashion. Intended for use with AECompressor.
     """
     counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
-    batch_size = batch_size or len(ds)
+    if batch_size is None:  # Don't batch
+        counts = counter.kmer_counts(ds['seqs'].to_numpy(), quiet=not progress)
+        return comp.compress(counts, progress=progress)
     full_batches = len(ds) // batch_size
     encodings = []
     for i in (tqdm(range(full_batches)) if progress else range(full_batches)):
