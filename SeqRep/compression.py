@@ -23,7 +23,7 @@ class Compressor:
         batch_size = batch_size or self.batch_size
         if batch_size == 0:
             return np.reshape(data, (1, *data.shape)), data[len(data):]
-        fully_batchable_data = data[:len(data) // batch_size]
+        fully_batchable_data = data[:len(data) - len(data) % batch_size]
         full_batches = np.reshape(fully_batchable_data,
                                   (-1, batch_size, *fully_batchable_data.shape[1:]))
         last_batch = data[len(data) - len(data) % batch_size:]
