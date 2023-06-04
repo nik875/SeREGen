@@ -124,7 +124,7 @@ class IPCA(Compressor):
         full_batches, last_batch = self._batch_data(data)
         result = self._mp_map_over_batches(self.pca.transform, full_batches, silence)
         if len(last_batch) > 0:
-            result += self.pca.transform(last_batch)
+            result.append(self.pca.transform(last_batch))
         return np.concatenate(result)
 
     def inverse_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
