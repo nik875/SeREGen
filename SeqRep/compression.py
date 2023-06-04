@@ -112,9 +112,11 @@ class IPCA(Compressor):
             print(f'Fitting IPCA Compressor using CPUs: {self.jobs}...')
         data = self.scaler.fit_transform(data)
         full_batches, last_batch = self._batch_data(data)
+        if len(last_batch) < self.postcomp_len:
+            last_batch = full_batches[-1]
+            full_batches = full_batches[:-1]
         self._mp_map_over_batches(self.pca.partial_fit, full_batches)
-        #if len(last_batch) >= self.postcomp_len:
-        #    self.pca.partial_fit(last_batch)
+        # Use normal fit on last batch so sklearn doesn't trigger a fit not called error
         self.pca.fit(last_batch)
 
     def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
