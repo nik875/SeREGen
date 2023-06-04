@@ -88,7 +88,7 @@ class PCA(Compressor):
         return self.pca.inverse_transform_bulk()
 
 
-class PCA_MP(Compressor):
+class IPCA(Compressor):
     """
     Use PCA to compress the input data. Supports parallelization over multiple CPUs.
     """

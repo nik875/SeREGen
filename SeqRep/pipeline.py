@@ -9,7 +9,7 @@ from sklearn.neighbors import BallTree
 from .dataset_builder import Dataset, DatasetBuilder, SILVAHeaderParser, COVIDHeaderParser
 from .visualize import repr_scatterplot
 from .kmers import KMerCounter
-from .compression import PCA, PCA_MP, AE, Compressor
+from .compression import PCA, IPCA, AE, Compressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder
 from .distance import Euclidean
@@ -143,8 +143,8 @@ class KMerCountsPipeline(Pipeline):
         postcomp_len = comp_repr_size or 4 ** K // 10 * 2
         if compressor == 'PCA':
             self.compressor = PCA(postcomp_len, quiet=quiet, **comp_args)
-        elif compressor == 'PCA_MP':
-            self.compressor = PCA_MP(postcomp_len, quiet=quiet, **comp_args)
+        elif compressor == 'IPCA':
+            self.compressor = IPCA(postcomp_len, quiet=quiet, **comp_args)
         elif compressor == 'AE':
             self.compressor = AE.auto(sample, postcomp_len, **comp_args)
             if not quiet:
