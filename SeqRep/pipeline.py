@@ -36,56 +36,81 @@ class Pipeline:
         self.dataset = builder.from_fasta(paths)
         self.quiet = quiet
         self.model = None
+        self.preproc_reprs = None
         self.reprs = None
         self.index = None
 
+    # Must be implemented by subclass
     # pylint: disable=unused-argument
-    def preprocess_seq(self, seq: str) -> np.ndarray:
+    def preprocess_seq(self, seq):
         """
-        Preprocesses a string sequence. Must be implemented by subclass.
+        Preprocesses a string sequence.
         @param seq: Sequence to preprocess.
         @return np.ndarray: Returns None by default.
         """
         return None
 
-    def preprocess_seqs(self, seqs: list[str]) -> list:
+    # Should be overriden by subclass for efficient preprocessing
+    def preprocess_seqs(self, seqs: list) -> list:
         """
-        Preprocesses a list of sequences. Can be overriden by subclass.
+        Preprocesses a list of sequences.
         @param seqs: Sequences to preprocess.
-        @return list: Returns a list of None by default.
+        @return list: Returns an array of preprocessed sequences.
         """
         return [self.preprocess_seq(i) for i in (tqdm(seqs) if not self.quiet else seqs)]
 
-    def fit(self):
+    # Must be implemented by subclass, super method must be called by implementation.
+    # This super method preprocesses the dataset into self.preproc_reprs.
+    # This variable is used to determine whether fit was called and to avoid preprocessing the
+    # dataset twice between fit and transform_dataset.
+    def fit(self, **kwargs):
         """
-        Fit the model to the dataset. Implemented by subclass.
+        Fit the model to the dataset.
         """
+        if not self.quiet:
+            print('Preprocessing dataset...')
+        self.preproc_reprs = self.preprocess_seqs(self.dataset['seqs'].to_numpy(), **kwargs)
 
-    def transform(self, seqs: list[str]) -> list:
+    def _transform_dec(self, fn: callable) -> callable:
+        if self.preproc_reprs is None:
+            raise ValueError('Fit must be called before transform!')
+        return fn
+
+    # Must be implemented by subclass.
+    @_transform_dec
+    def transform_after_preproc(self, data):
+        """
+        Convert preprocessed sequence representations into final encodings.
+        """
+        return data
+
+    @_transform_dec
+    def transform(self, seqs: list) -> list:
         """
         Transform an array of string sequences to learned representations.
-        Implemented by subclass. Same as preprocess_seqs by default.
         @param seqs: List of string sequences to transform.
-        @return list: Sequence representations (list of None by default).
+        @return list: Sequence representations.
         """
-        return self.preprocess_seqs(seqs)
+        return self.transform_after_preproc(self.preprocess_seqs(seqs))
 
+    @_transform_dec
     def transform_dataset(self) -> np.ndarray:
         """
         Transforms the loaded dataset into representations. Saves as self.reprs and returns result.
         Deletes any existing search tree.
         """
-        self.reprs = self.transform(self.dataset['seqs'].to_numpy())
+        self.reprs = self.transform_after_preproc(self.preproc_reprs)
         self.index = None  # Delete existing search tree because we assume reprs have changed.
         return self.reprs
 
-    def _reprs_check(self):
+    def _reprs_check(self, fn: callable):
         """
         Wraps logic to check that reprs exist.
         """
         if self.reprs is None:
             raise ValueError('transform_dataset must be called first!')
 
+    @_reprs_check
     def visualize_axes(self, x: int, y: int, **kwargs):
         """
         Visualizes two axes of the dataset representations on a simple scatterplot.
@@ -93,18 +118,18 @@ class Pipeline:
         @param y: which axis to use as y.
         @param kwargs: Accepts additional keyword arguments for visualize.repr_scatterplot().
         """
-        self._reprs_check()
         repr_scatterplot(np.stack([self.reprs[:, x], self.reprs[:, y]], axis=1), **kwargs)
 
+    @_reprs_check
     def visualize_2D(self, **kwargs):
         """
         Visualizes 2D dataset as a scatterplot. Keyword arguments to repr_scatterplot are accepted.
         """
-        self._reprs_check()
         if len(self.reprs.shape) != 2 or self.reprs.shape[1] != 2:
             raise ValueError('Incompatible representation dimensions!')
         self.visualize_axes(0, 1, **kwargs)
 
+    @_reprs_check
     def search(self, query: list[str], n_neighbors=1) -> tuple[np.ndarray, list[pd.Series]]:
         """
         Search the dataset for the most similar sequences to the query.
@@ -112,7 +137,6 @@ class Pipeline:
         @param n_neighbors: Number of neighbors to find for each sequence. Defaults to 1.
         @return np.ndarray: Search results.
         """
-        self._reprs_check()
         if self.index is None:  # If index hasn't been created, create it.
             if not self.quiet:
                 print('Creating search index (this could take a while)...')
@@ -193,20 +217,18 @@ class KMerCountsPipeline(Pipeline):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         """
-        if not self.quiet:
-            print('Preprocessing dataset...')
-        model_input = self.preprocess_seqs(self.dataset['seqs'].to_numpy(), preproc_batch_size)
+        super().fit(batch_size=preproc_batch_size)
         # For AECompressor, distances between encodings are meaningless
         distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()) \
-            if isinstance(self.compressor, AE) else model_input
+            if isinstance(self.compressor, AE) else self.preproc_reprs
         if not self.quiet:
             print('Training model...')
-        self.model.fit(model_input, distance_on=distance_on, **model_fit_args)
+        self.model.fit(self.preproc_reprs, distance_on=distance_on, **model_fit_args)
 
-    def transform(self, seqs: list[str], preproc_batch_size=0, **kwargs) -> np.ndarray:
+    def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
         """
         Transform the given sequences. Accepts keyword arguments for ComparativeEncoder.transform().
         """
-        enc = self.preprocess_seqs(seqs, preproc_batch_size)
-        return self.model.transform(enc, **kwargs)
+        super().transform_after_preproc(data)
+        return self.model.transform(data, **kwargs)
 
