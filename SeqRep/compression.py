@@ -14,13 +14,15 @@ class Compressor:
     """
     Abstract Compressor class used for compressing input data.
     """
-    def __init__(self, postcomp_len: int, quiet: bool, batch_size=1):
+    def __init__(self, postcomp_len: int, quiet: bool, batch_size=0):
         self.postcomp_len = postcomp_len
         self.quiet = quiet
         self.batch_size = batch_size
 
     def _batch_data(self, data: np.ndarray, batch_size=None) -> tuple[np.ndarray, np.ndarray]:
         batch_size = batch_size or self.batch_size
+        if batch_size == 0:
+            return np.reshape(data, (1, *data.shape)), data[len(data):]
         fully_batchable_data = data[:len(data) // batch_size]
         full_batches = np.reshape(fully_batchable_data,
                                   (-1, batch_size, *fully_batchable_data.shape[1:]))
@@ -91,9 +93,9 @@ class PCA_MP(Compressor):
     Use PCA to compress the input data. Supports parallelization over multiple CPUs.
     """
     def __init__(self, n_components: int, quiet=False, batch_size=None, jobs=1):
+        super().__init__(n_components, quiet, batch_size or 0)
         self.jobs = jobs
         self.pca = IncrementalPCA(n_components=n_components, batch_size=batch_size)
-        super().__init__(n_components, quiet, self.pca.batch_size)
         self.scaler = StandardScaler()
 
     def _mp_map_over_batches(self, fn: callable, full_batches: np.ndarray) -> np.ndarray:
