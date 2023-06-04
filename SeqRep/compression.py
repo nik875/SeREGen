@@ -36,18 +36,22 @@ class Compressor:
         @param quiet: whether to print output
         """
 
-    def transform(self, data: np.ndarray) -> np.ndarray:
+    # pylint: disable=unused-argument
+    def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
         """
         Compress an array of data elements.
         @param data: data to compress.
+        @param silence: additional option to silence output of this function.
         @return np.ndarray: compressed data.
         """
         return data
 
-    def inverse_transform(self, data: np.ndarray) -> np.ndarray:
+    # pylint: disable=unused-argument
+    def inverse_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
         """
         Decodes the compressed data back to original.
         @param data: data to decode.
+        @param silence: additional option to silence output of this function.
         @return np.ndarray: uncompressed data.
         """
         return data
@@ -60,8 +64,8 @@ class Compressor:
             return self.transform(counter.kmer_counts(seqs))
         full_batches, last_batch = self._batch_data(np.array(seqs, dtype=str),
                                                     self.batch_size * batches_per_it)
-        result = [self.transform(counter.kmer_counts(i)) for i in (full_batches if self.quiet
-                                                                   else tqdm(full_batches))]
+        result = [self.transform(counter.kmer_counts(i), silence=True) for i in
+                  (full_batches if self.quiet else tqdm(full_batches))]
         final_kmers = counter.kmer_counts(last_batch)
         final_compressed = self.transform(final_kmers)
         return np.concatenate(result + [final_compressed])
@@ -79,10 +83,10 @@ class PCA(Compressor):
     def fit(self, data: np.ndarray):
         self.pca.fit(self.scaler.fit_transform(data))
 
-    def transform(self, data: np.ndarray):
+    def transform(self, data: np.ndarray, silence=False):
         return self.pca.transform(self.scaler.transform(data))
 
-    def inverse_transform(self, data: np.ndarray):
+    def inverse_transform(self, data: np.ndarray, silence=False):
         return self.pca.inverse_transform_bulk()
 
 
@@ -96,9 +100,10 @@ class IPCA(Compressor):
         self.pca = IncrementalPCA(n_components=n_components, batch_size=batch_size)
         self.scaler = StandardScaler()
 
-    def _mp_map_over_batches(self, fn: callable, full_batches: np.ndarray) -> np.ndarray:
+    def _mp_map_over_batches(self, fn: callable, full_batches: np.ndarray,
+                             silence=False) -> np.ndarray:
         with mp.Pool(self.jobs) as p:
-            it = p.imap_unordered(fn, full_batches) if self.quiet else tqdm(
+            it = p.imap_unordered(fn, full_batches) if self.quiet or silence else tqdm(
                 p.imap_unordered(fn, full_batches), total=len(full_batches))
             return list(it)
 
@@ -111,15 +116,15 @@ class IPCA(Compressor):
         if len(last_batch) >= self.postcomp_len:
             self.pca.partial_fit(last_batch)
 
-    def transform(self, data: np.ndarray) -> np.ndarray:
+    def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
         data = self.scaler.transform(data)
         full_batches, last_batch = self._batch_data(data)
-        result = self._mp_map_over_batches(self.pca.transform, full_batches)
+        result = self._mp_map_over_batches(self.pca.transform, full_batches, silence)
         return np.concatenate(result + [self.pca.transform(last_batch)])
 
-    def inverse_transform(self, data: np.ndarray) -> np.ndarray:
+    def inverse_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
         full_batches, last_batch = self._batch_data(data)
-        result = self._mp_map_over_batches(self.pca.inverse_transform, full_batches)
+        result = self._mp_map_over_batches(self.pca.inverse_transform, full_batches, silence)
         result = np.concatenate(result + [self.pca.inverse_transform(last_batch)])
         return self.scaler.inverse_transform(result)
 
@@ -171,11 +176,11 @@ class AE(Compressor):
         if self.quiet:
             tf.keras.utils.enable_interactive_logging()
 
-    def transform(self, data: np.ndarray) -> np.ndarray:
-        return self.encoder(data) if self.quiet else \
+    def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
+        return self.encoder(data) if self.quiet or silence else \
             self.encoder.predict(data, batch_size=self.batch_size)
 
-    def inverse_transform(self, data: np.ndarray) -> np.ndarray:
-        return self.decoder(data) if self.quiet else \
+    def inverse_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
+        return self.decoder(data) if self.quiet or silence else \
             self.decoder.predict(data, batch_size=self.batch_size)
 
