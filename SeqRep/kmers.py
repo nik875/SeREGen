@@ -84,13 +84,13 @@ class KMerCounter:
         # Split given string into parts and take sum of each kmer's total occurrences in each part
         return np.sum([self._seq_to_kmer_counts(i) for i in self._split_str(seq)], axis=0)
 
-    def _gen_kmers(self, seqs: np.ndarray, func: callable, use_mp: bool) -> list:
+    def _gen_kmers(self, seqs: np.ndarray, func: callable, use_mp: bool, silence=False) -> list:
         """
         Avoids duplication of logic for kmer sequence/count generation.
         """
         if use_mp:
             with mp.Pool(self.jobs) as p:
-                it = p.imap(func, seqs, chunksize=self.chunksize) if self.quiet else \
+                it = p.imap(func, seqs, chunksize=self.chunksize) if self.quiet or silence else \
                     tqdm(p.imap(func, seqs, chunksize=self.chunksize), total=len(seqs))
                 return list(it)
         else:
@@ -104,12 +104,12 @@ class KMerCounter:
         """
         return self._gen_kmers(seqs, self.str_to_kmers, not self.debug)
 
-    def kmer_counts(self, seqs: list[str]) -> np.ndarray:
+    def kmer_counts(self, seqs: list[str], silence=False) -> np.ndarray:
         """
         Generate kmer counts for a given array of string sequences.
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         """
-        return np.array(self._gen_kmers(seqs, self.str_to_kmer_counts, not self.debug))
+        return np.array(self._gen_kmers(seqs, self.str_to_kmer_counts, not self.debug, silence))
 
     def _ohe_seq(self, seq: np.ndarray) -> np.ndarray:
         """
