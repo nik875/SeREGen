@@ -115,7 +115,7 @@ class IPCA(Compressor):
         self._mp_map_over_batches(self.pca.partial_fit, full_batches)
         if len(last_batch) >= self.postcomp_len:
             self.pca.partial_fit(last_batch)
-        self.pca.fit([[]])
+        self.pca.fit(data[len(data):])
 
     def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
         data = self.scaler.transform(data)
