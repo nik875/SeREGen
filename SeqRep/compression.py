@@ -60,10 +60,8 @@ class Compressor:
             return self.transform(counter.kmer_counts(seqs))
         full_batches, last_batch = self._batch_data(np.array(seqs, dtype=str),
                                                     self.batch_size * batches_per_it)
-        result = []
-        for i in full_batches if self.quiet else tqdm(full_batches):
-            kmers = counter.kmer_counts(i, quiet=self.quiet)
-            result.append(self.transform(kmers))
+        result = [self.transform(counter.kmer_counts(i)) for i in (full_batches if self.quiet
+                                                                   else tqdm(full_batches))]
         final_kmers = counter.kmer_counts(last_batch)
         final_compressed = self.transform(final_kmers)
         return np.concatenate(result + [final_compressed])
