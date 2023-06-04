@@ -110,7 +110,8 @@ class PCA_MP(Compressor):
         data = self.scaler.fit_transform(data)
         full_batches, last_batch = self._batch_data(data)
         self._mp_map_over_batches(self.pca.partial_fit, full_batches)
-        self.pca.partial_fit(last_batch)
+        if len(last_batch) >= self.postcomp_len:
+            self.pca.partial_fit(last_batch)
 
     def transform(self, data: np.ndarray) -> np.ndarray:
         data = self.scaler.transform(data)
