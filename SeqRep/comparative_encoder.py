@@ -66,16 +66,17 @@ class ComparativeEncoder:
             self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
 
     @classmethod
-    def from_model_builder(cls, obj, dist=None, **compile_params):
+    def from_model_builder(cls, obj, dist=None, quiet=False, **compile_params):
         """
         Factory function from a ModelBuilder object.
         @param obj: ModelBuilder object.
         @param dist: distance metric to use when comparing two sequences.
+        @param quiet: whether to silence object
         @param compile_params: passed into ModelBuilder.compile()
         @return ComparativeEncoder: new object
         """
         model = obj.compile(**compile_params)
-        return cls(model, dist=dist, strategy=obj.strategy)
+        return cls(model, dist=dist, strategy=obj.strategy, quiet=quiet)
 
     def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int,
                           chunksize: int, batch_size: int):

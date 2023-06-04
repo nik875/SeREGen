@@ -106,7 +106,7 @@ class IPCA(Compressor):
 
     def fit(self, data: np.ndarray):
         if not self.quiet:
-            print(f'Fitting PCA Compressor using CPUs: {self.jobs}...')
+            print(f'Fitting IPCA Compressor using CPUs: {self.jobs}...')
         data = self.scaler.fit_transform(data)
         full_batches, last_batch = self._batch_data(data)
         self._mp_map_over_batches(self.pca.partial_fit, full_batches)
