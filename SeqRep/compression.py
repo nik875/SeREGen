@@ -71,9 +71,9 @@ class PCA(Compressor):
     """
     Use PCA to compress input data.
     """
-    def __init__(self, n_components: int, quiet=False, batch_size=None):
-        self.pca = SKPCA(n_components=n_components, batch_size=batch_size)
-        super().__init__(n_components, quiet, self.pca.batch_size_)
+    def __init__(self, n_components: int, quiet=False):
+        self.pca = SKPCA(n_components=n_components)
+        super().__init__(n_components, quiet)
         self.scaler = StandardScaler()
 
     def fit(self, data: np.ndarray):
@@ -93,7 +93,7 @@ class PCA_MP(Compressor):
     def __init__(self, n_components: int, quiet=False, batch_size=None, jobs=1):
         self.jobs = jobs
         self.pca = IncrementalPCA(n_components=n_components, batch_size=batch_size)
-        super().__init__(n_components, quiet, self.pca.batch_size_)
+        super().__init__(n_components, quiet, self.pca.batch_size)
         self.scaler = StandardScaler()
 
     def _mp_map_over_batches(self, fn: callable, full_batches: np.ndarray) -> np.ndarray:
