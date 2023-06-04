@@ -101,8 +101,7 @@ class PCA_MP(Compressor):
     def _mp_map_over_batches(self, fn: callable, full_batches: np.ndarray) -> np.ndarray:
         with mp.Pool(self.jobs) as p:
             it = p.imap_unordered(fn, full_batches) if self.quiet else tqdm(
-                p.imap_unordered(fn, full_batches), len(full_batches),
-                total=len(full_batches))
+                p.imap_unordered(fn, full_batches), total=len(full_batches))
             return list(it)
 
     def fit(self, data: np.ndarray):
