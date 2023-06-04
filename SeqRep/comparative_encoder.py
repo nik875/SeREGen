@@ -43,12 +43,13 @@ class ComparativeEncoder:
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, encoder: tf.keras.Model, dist=None, strategy=None):
+    def __init__(self, encoder: tf.keras.Model, dist=None, strategy=None, quiet=False):
         """
         @param encoder: TensorFlow model that must support .train() and .__call__() at minimum.
         .predict() required for progress bar when transforming data.
         @param dist: distance metric to use when comparing two sequences.
         """
+        self.quiet = quiet
         input_shape = encoder.layers[0].output_shape[0][1:]
         self.encoder = encoder
         self.distance = dist or distance.Distance()
@@ -110,7 +111,7 @@ class ComparativeEncoder:
         self.comparative_model.fit(train_data, epochs=1)
 
     def fit(self, data: np.ndarray, distance_on=None, batch_size=100, epochs=10, jobs=1,
-            chunksize=1, silent=False):
+            chunksize=1):
         """
         Fit the ComparativeEncoder to the given data.
         @param data: np.ndarray to train on.
@@ -121,7 +122,6 @@ class ComparativeEncoder:
         @param epochs: epochs to train for.
         @param jobs: number of CPU jobs to use for distance calculations (not GPU optimized).
         @param chunksize: chunksize for Python multiprocessing.
-        @param silent: whether to suppress output.
         """
         distance_on = distance_on if distance_on is not None else data
         def epoch():
@@ -129,7 +129,7 @@ class ComparativeEncoder:
 
         for i in range(epochs):
             start = time.time()
-            if silent:
+            if self.quiet:
                 suppress_output(epoch)
             else:
                 print(f'Epoch {i + 1}:')
@@ -147,7 +147,7 @@ class ComparativeEncoder:
         @param batch_size: Batch size for .predict(), not required if not using progress.
         @return np.ndarray: Representations for all sequences in data.
         """
-        if progress:
+        if progress and not self.quiet:
             return self.encoder.predict(data)
         return self.encoder(data, batch_size=batch_size)
 

@@ -12,7 +12,7 @@ class KMerCounter:
     KMer Counter class that can convert DNA/RNA sequences into sequences of kmers or kmer
     frequency tables. Wraps logic for Python multiprocessing using jobs and chunksize.
     """
-    def __init__(self, k: int, jobs=1, chunksize=1, debug=False):
+    def __init__(self, k: int, jobs=1, chunksize=1, debug=False, quiet=False):
         """
         KMer Counter class that can convert DNA/RNA sequences into sequences of kmers or kmer
         frequency tables. Wraps logic for Python multiprocessing using jobs and chunksize.
@@ -20,10 +20,11 @@ class KMerCounter:
         """
         self.k = k
         self.debug = debug
+        self.quiet = quiet
         self.jobs = jobs
         self.chunksize = chunksize
-        self.alphabet = np.array(['A', 'C', 'G', 'T', 'U'])
-        self.alphabet_pattern = re.compile(f'[^{"".join(self.alphabet)}]')
+        alphabet = np.array(['A', 'C', 'G', 'T', 'U'])
+        self.alphabet_pattern = re.compile(f'[^{"".join(alphabet)}]')
 
         # Make a lookup table with an entry for every possible data byte
         self.lookup_table = np.zeros(256, dtype=np.uint32)
@@ -83,32 +84,32 @@ class KMerCounter:
         # Split given string into parts and take sum of each kmer's total occurrences in each part
         return np.sum([self._seq_to_kmer_counts(i) for i in self._split_str(seq)], axis=0)
 
-    def _gen_kmers(self, seqs: np.ndarray, func: callable, quiet: bool, use_mp: bool) -> list:
+    def _gen_kmers(self, seqs: np.ndarray, func: callable, use_mp: bool) -> list:
         """
         Avoids duplication of logic for kmer sequence/count generation.
         """
         if use_mp:
             with mp.Pool(self.jobs) as p:
-                it = p.imap(func, seqs, chunksize=self.chunksize) if quiet else \
+                it = p.imap(func, seqs, chunksize=self.chunksize) if self.quiet else \
                     tqdm(p.imap(func, seqs, chunksize=self.chunksize), total=len(seqs))
                 return list(it)
         else:
-            it = seqs if quiet else tqdm(seqs)
+            it = seqs if self.quiet else tqdm(seqs)
             return [func(i) for i in it]
 
-    def kmer_sequences(self, seqs: list, quiet=False) -> list:
+    def kmer_sequences(self, seqs: list[str]) -> list:
         """
         Generate kmer sequences for a given array of string sequences.
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         """
-        return self._gen_kmers(seqs, self.str_to_kmers, quiet, not self.debug)
+        return self._gen_kmers(seqs, self.str_to_kmers, not self.debug)
 
-    def kmer_counts(self, seqs: np.ndarray, quiet=False) -> np.ndarray:
+    def kmer_counts(self, seqs: list[str]) -> np.ndarray:
         """
         Generate kmer counts for a given array of string sequences.
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         """
-        return np.array(self._gen_kmers(seqs, self.str_to_kmer_counts, quiet, not self.debug))
+        return np.array(self._gen_kmers(seqs, self.str_to_kmer_counts, not self.debug))
 
     def _ohe_seq(self, seq: np.ndarray) -> np.ndarray:
         """
@@ -118,14 +119,14 @@ class KMerCounter:
         s[np.arange(len(seq)), seq] = 1
         return s
 
-    def kmer_sequences_ohe(self, seqs: list, trim_to=None, quiet=False) -> list:
+    def kmer_sequences_ohe(self, seqs: list, trim_to=None) -> list:
         """
         Generate kmer sequences for a given array of string sequences. Result is one-hot encoded.
         Sequences do not need to be uniform length. Invalid/unknown base pairs will be ignored.
         """
-        kmers = self.kmer_sequences(seqs, quiet=quiet)
+        kmers = self.kmer_sequences(seqs)
         if trim_to is None:
-            return self._gen_kmers(kmers, self._ohe_seq, quiet, False)
+            return self._gen_kmers(kmers, self._ohe_seq, False)
         assert all(len(i) >= trim_to for i in kmers)
         kmers = np.stack([i[:trim_to] for i in kmers])
         result = np.zeros((*kmers.shape, 4 ** self.k))

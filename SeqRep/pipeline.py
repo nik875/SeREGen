@@ -6,11 +6,10 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from sklearn.neighbors import BallTree
-from .dataset_builder import DatasetBuilder, SILVAHeaderParser, COVIDHeaderParser
+from .dataset_builder import Dataset, DatasetBuilder, SILVAHeaderParser, COVIDHeaderParser
 from .visualize import repr_scatterplot
 from .kmers import KMerCounter
-from .compression import PCACompressor, AECompressor, Compressor, count_kmers_mp, \
-    count_kmers_batched
+from .compression import PCA, PCA_MP, AE, Compressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder
 from .distance import Euclidean
@@ -128,79 +127,86 @@ class KMerCountsPipeline(Pipeline):
     """
     Automated pipeline using KMer Counts. Optionally compresses input data before training model.
     """
-    def __init__(self, paths: list[str], K: int, repr_size=2, header_parser='None', quiet=False,
-                 depth=3, jobs=1, chunksize=1, trim_to=0, compressor=None,
-                 comp_fit_sample_frac=1, comp_repr_size=0, **ae_fit_args):
+    def __init__(self, K: int, paths: list[str], repr_size=2, header_parser='None', quiet=False,
+                 depth=3, counter_jobs=1, counter_chunksize=1, trim_to=0, compressor=None,
+                 comp_fit_sample_frac=1, comp_repr_size=0, **comp_args):
         super().__init__(paths, header_parser=header_parser, quiet=quiet)
         if trim_to:  # Optional sequence trimming
             self.dataset.trim_seqs(trim_to)
-        self.K = K
-        self.jobs = jobs
-        self.chunksize = chunksize
-        self.counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
+        self.counter = KMerCounter(K, jobs=counter_jobs, chunksize=counter_chunksize, quiet=quiet)
 
-        # Compression (defaults to 80%)
+        # Compression (defaults to 80% if a compressor is passed, otherwise none is applied)
         r = np.random.default_rng()
         sample = r.permutation(len(self.dataset))[:int(len(self.dataset) *
                                                        comp_fit_sample_frac)]
-        sample = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()[sample], quiet=self.quiet)
+        sample = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()[sample])
         postcomp_len = comp_repr_size or 4 ** K // 10 * 2
         if compressor == 'PCA':
-            self.compressor = PCACompressor(postcomp_len)
-            if not self.quiet:
-                print('Training PCA compressor...')
-            self.compressor.fit(sample)
+            self.compressor = PCA(postcomp_len, quiet=quiet, **comp_args)
+        elif compressor == 'PCA_MP':
+            self.compressor = PCA_MP(postcomp_len, quiet=quiet, **comp_args)
         elif compressor == 'AE':
-            self.compressor = AECompressor.auto(sample, postcomp_len)
-            self.compressor: AECompressor
-            if not self.quiet:
+            self.compressor = AE.auto(sample, postcomp_len, **comp_args)
+            if not quiet:
                 print('AE Compressor Summary:')
                 self.compressor.summary()
-                print('Training compressor...')
-            self.compressor.fit(sample, **ae_fit_args)
         else:
-            postcomp_len = 4 ** K
-            self.compressor = Compressor()
-            self.compressor.fit(sample)
+            self.compressor = Compressor(postcomp_len := 4 ** K, quiet)
+        self.compressor.fit(sample)
 
         # Model (training is distributed by default across all available GPUs)
         builder = ModelBuilder((postcomp_len,), tf.distribute.MirroredStrategy())
         builder.dense(postcomp_len, depth=depth)
         self.model = ComparativeEncoder.from_model_builder(builder, dist=Euclidean(),
-                                                           output_dim=repr_size)
+                                                           output_dim=repr_size, quiet=quiet)
         if not quiet:
             self.model.summary()
 
+    @classmethod
+    def from_objs(cls, K: int, ds: Dataset, counter: KMerCounter, compressor=None, quiet=False,
+                  repr_size=2, depth=3):
+        """
+        Build a KMerCountsPipeline from Dataset, KMerCounter, and optional Compressor objects.
+        """
+        obj = cls(K, [], quiet=True)
+        obj.quiet = quiet
+        obj.dataset = ds
+        obj.counter = counter
+        obj.compressor = compressor or Compressor(4 ** K, quiet)
+
+        builder = ModelBuilder((obj.compressor.postcomp_len,), tf.distribute.MirroredStrategy())
+        builder.dense(obj.compressor.postcomp_len, depth=depth)
+        obj.model = ComparativeEncoder.from_model_builder(builder, dist=Euclidean(),
+                                                           output_dim=repr_size, quiet=quiet)
+        if not quiet:
+            obj.model.summary()
+        return obj
+
     def preprocess_seq(self, seq: str) -> np.ndarray:
         counts = self.counter.str_to_kmer_counts(seq)
-        return self.compressor.compress(np.array([counts]))[0]
+        return self.compressor.transform(np.array([counts]))[0]
 
-    def preprocess_seqs(self, seqs: list[str], ae_batch_size=None) -> np.ndarray:
-        if isinstance(self.compressor, PCACompressor):
-            return count_kmers_mp(self.K, self.compressor, self.dataset, self.jobs, self.chunksize)
-        if isinstance(self.compressor, AECompressor):
-            return count_kmers_batched(self.K, self.compressor, self.dataset, ae_batch_size,
-                                       self.jobs, self.chunksize, not self.quiet)
-        return self.counter.kmer_counts(seqs, quiet=self.quiet)
+    def preprocess_seqs(self, seqs: list[str], batch_size=0) -> np.ndarray:
+        return self.compressor.count_kmers(self.counter, seqs, batch_size)
 
-    def fit(self, **kwargs):
+    def fit(self, preproc_batch_size=0, **model_fit_args):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         """
         if not self.quiet:
             print('Preprocessing dataset...')
-        model_input = self.preprocess_seqs(self.dataset['seqs'].to_numpy())
+        model_input = self.preprocess_seqs(self.dataset['seqs'].to_numpy(), preproc_batch_size)
         # For AECompressor, distances between encodings are meaningless
-        distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy(), quiet=self.quiet) \
-            if isinstance(self.compressor, AECompressor) else model_input
+        distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()) \
+            if isinstance(self.compressor, AE) else model_input
         if not self.quiet:
             print('Training model...')
-        self.model.fit(model_input, distance_on=distance_on, silent=self.quiet, **kwargs)
+        self.model.fit(model_input, distance_on=distance_on, **model_fit_args)
 
-    def transform(self, seqs: list[str], **kwargs) -> np.ndarray:
+    def transform(self, seqs: list[str], preproc_batch_size=0, **kwargs) -> np.ndarray:
         """
         Transform the given sequences. Accepts keyword arguments for ComparativeEncoder.transform().
         """
-        enc = self.preprocess_seqs(seqs)
-        return self.model.transform(enc, progress=not self.quiet, **kwargs)
+        enc = self.preprocess_seqs(seqs, preproc_batch_size)
+        return self.model.transform(enc, **kwargs)
 
