@@ -3,7 +3,7 @@ Contains distance metrics used for training ComparativeEncoders.
 """
 import numpy as np
 from scipy import stats
-from scipy.spatial.distance import euclidean, cosine
+from scipy.spatial.distance import euclidean as sceuclidean, cosine as sccosine
 from Bio import pairwise2
 from .kmers import KMerCounter
 
@@ -51,8 +51,8 @@ class Distance:
         zscores = stats.zscore(data)
         return self.MAX_DIST / (np.max(zscores) - np.min(zscores)) * zscores + self.AVERAGE_DIST
 
-Euclidean = Distance(transform_fn=euclidean)
-Cosine = Distance(transform_fn=cosine)
+euclidean = Distance(transform_fn=sceuclidean)
+cosine = Distance(transform_fn=sccosine)
 
 
 class Alignment(Distance):

@@ -51,7 +51,7 @@ class ComparativeEncoder:
         """
         self.quiet = quiet
         input_shape = encoder.layers[0].output_shape[0][1:]
-        self.repr_size = encoder.layers[-1].output_shape[0][1:]
+        self.repr_size = encoder.layers[-1].output_shape[1:]
         self.depth = len(encoder.layers)
         self.encoder = encoder
         self.distance = dist or distance.Distance()

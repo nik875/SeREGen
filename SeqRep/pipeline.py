@@ -186,23 +186,22 @@ class KMerCountsPipeline(Pipeline):
             self.model.summary()
 
     @classmethod
-    def from_objs(cls, K: int, ds: Dataset, counter: KMerCounter, compressor=None, quiet=False,
-                  **kwargs):
+    def from_objs(cls, K: int, ds: Dataset, counter: KMerCounter, compressor=None, **kwargs):
         """
         Build a KMerCountsPipeline from Dataset, KMerCounter, and optional Compressor objects.
         """
         obj = cls(K, [], quiet=True, **kwargs)
-        obj.quiet = quiet
+        obj.quiet = kwargs['quiet'] if 'quiet' in kwargs else False
         obj.dataset = ds
         obj.counter = counter
-        obj.compressor = compressor or Compressor(4 ** K, quiet)
+        obj.compressor = compressor or Compressor(4 ** K, obj.quiet)
 
         builder = ModelBuilder((obj.compressor.postcomp_len,), tf.distribute.MirroredStrategy())
         builder.dense(obj.compressor.postcomp_len, depth=obj.model.depth)
         obj.model = ComparativeEncoder.from_model_builder(builder, dist=obj.model.distance,
                                                           output_dim=obj.model.repr_size,
-                                                          quiet=quiet)
-        if not quiet:
+                                                          quiet=obj.quiet)
+        if not obj.quiet:
             obj.model.summary()
         return obj
 
