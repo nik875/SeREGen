@@ -8,15 +8,6 @@ from Bio import pairwise2
 from .kmers import KMerCounter
 
 
-def unwrap_tuple(fn):
-    """
-    Call a function on a tuple pair, expanding the tuple into arguments.
-    """
-    def wrapper(tup):
-        return fn(*tup)
-    return wrapper
-
-
 # pylint: disable=method-hidden, unused-argument
 class Distance:
     """
@@ -30,9 +21,8 @@ class Distance:
         """
         Allows a functional method for creating new distance metrics.
         """
-        self.transform = unwrap_tuple(transform_fn) if transform_fn else self.transform
-        self.postprocessor = unwrap_tuple(postprocessor_fn) if postprocessor_fn \
-            else self.postprocessor
+        self.transform = transform_fn or self.transform
+        self.postprocessor = postprocessor_fn or self.postprocessor
 
     def transform(self, pair: tuple) -> int:
         """
@@ -51,8 +41,15 @@ class Distance:
         zscores = stats.zscore(data)
         return self.MAX_DIST / (np.max(zscores) - np.min(zscores)) * zscores + self.AVERAGE_DIST
 
-euclidean = Distance(transform_fn=sceuclidean)
-cosine = Distance(transform_fn=sccosine)
+
+def _euclidean_transform(pair: tuple) -> int:
+    return sceuclidean(*pair)
+euclidean = Distance(transform_fn=_euclidean_transform)
+
+
+def _cosine_transform(pair: tuple) -> int:
+    return sccosine(*pair)
+cosine = Distance(transform_fn=_cosine_transform)
 
 
 class Alignment(Distance):

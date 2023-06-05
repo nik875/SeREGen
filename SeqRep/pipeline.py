@@ -225,9 +225,6 @@ class KMerCountsPipeline(Pipeline):
             distance_on = self.preproc_reprs
         else:
             distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
-        # For AECompressor, distances between encodings are meaningless
-        distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()) \
-            if isinstance(self.compressor, AE) else self.preproc_reprs
         if not self.quiet:
             print('Training model...')
         self.model.fit(self.preproc_reprs, distance_on=distance_on, **model_fit_args)
