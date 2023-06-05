@@ -12,7 +12,7 @@ from .kmers import KMerCounter
 from .compression import PCA, IPCA, AE, Compressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder
-from .distance import Euclidean
+from .distance import cosine, IncrementalDistance
 
 
 class Pipeline:
@@ -180,27 +180,28 @@ class KMerCountsPipeline(Pipeline):
         # Model (training is distributed by default across all available GPUs)
         builder = ModelBuilder((postcomp_len,), tf.distribute.MirroredStrategy())
         builder.dense(postcomp_len, depth=depth)
-        self.model = ComparativeEncoder.from_model_builder(builder, dist=Euclidean(),
+        self.model = ComparativeEncoder.from_model_builder(builder, dist=cosine,
                                                            output_dim=repr_size, quiet=quiet)
         if not quiet:
             self.model.summary()
 
     @classmethod
     def from_objs(cls, K: int, ds: Dataset, counter: KMerCounter, compressor=None, quiet=False,
-                  repr_size=2, depth=3):
+                  **kwargs):
         """
         Build a KMerCountsPipeline from Dataset, KMerCounter, and optional Compressor objects.
         """
-        obj = cls(K, [], quiet=True)
+        obj = cls(K, [], quiet=True, **kwargs)
         obj.quiet = quiet
         obj.dataset = ds
         obj.counter = counter
         obj.compressor = compressor or Compressor(4 ** K, quiet)
 
         builder = ModelBuilder((obj.compressor.postcomp_len,), tf.distribute.MirroredStrategy())
-        builder.dense(obj.compressor.postcomp_len, depth=depth)
-        obj.model = ComparativeEncoder.from_model_builder(builder, dist=Euclidean(),
-                                                           output_dim=repr_size, quiet=quiet)
+        builder.dense(obj.compressor.postcomp_len, depth=obj.model.depth)
+        obj.model = ComparativeEncoder.from_model_builder(builder, dist=obj.model.distance,
+                                                          output_dim=obj.model.repr_size,
+                                                          quiet=quiet)
         if not quiet:
             obj.model.summary()
         return obj
@@ -212,11 +213,19 @@ class KMerCountsPipeline(Pipeline):
     def preprocess_seqs(self, seqs: list[str], batch_size=0) -> np.ndarray:
         return self.compressor.count_kmers(self.counter, seqs, batch_size)
 
-    def fit(self, preproc_batch_size=0, **model_fit_args):
+    def fit(self, preproc_batch_size=0, dist_on_preproc=False, incremental_dist=False,
+            **model_fit_args):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         """
         super().fit(batch_size=preproc_batch_size)
+        if incremental_dist:
+            self.model.distance = IncrementalDistance(self.model.distance, self.counter)
+            distance_on = self.dataset['seqs']
+        elif dist_on_preproc:
+            distance_on = self.preproc_reprs
+        else:
+            distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
         # For AECompressor, distances between encodings are meaningless
         distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()) \
             if isinstance(self.compressor, AE) else self.preproc_reprs

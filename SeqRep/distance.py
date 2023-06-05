@@ -1,12 +1,23 @@
-import multiprocessing as mp
+"""
+Contains distance metrics used for training ComparativeEncoders.
+"""
 import numpy as np
 from scipy import stats
-import matplotlib.pyplot as plt
-from kpal.metrics import euclidean
+from scipy.spatial.distance import euclidean, cosine
 from Bio import pairwise2
-from tqdm import tqdm as tqdm
+from .kmers import KMerCounter
 
 
+def unwrap_tuple(fn):
+    """
+    Call a function on a tuple pair, expanding the tuple into arguments.
+    """
+    def wrapper(tup):
+        return fn(*tup)
+    return wrapper
+
+
+# pylint: disable=method-hidden, unused-argument
 class Distance:
     """
     Abstract class representing a distance metric for two sequences.
@@ -19,8 +30,9 @@ class Distance:
         """
         Allows a functional method for creating new distance metrics.
         """
-        self.transform = transform_fn or self.transform
-        self.postprocessor = postprocessor_fn or self.postprocessor
+        self.transform = unwrap_tuple(transform_fn) if transform_fn else self.transform
+        self.postprocessor = unwrap_tuple(postprocessor_fn) if postprocessor_fn \
+            else self.postprocessor
 
     def transform(self, pair: tuple) -> int:
         """
@@ -37,23 +49,10 @@ class Distance:
         @return np.ndarray
         """
         zscores = stats.zscore(data)
-        max_zscore = np.max(zscores)
         return self.MAX_DIST / (np.max(zscores) - np.min(zscores)) * zscores + self.AVERAGE_DIST
 
-
-class Euclidean(Distance):
-    """
-    Normalized Euclidean distance implementation between two arrays of numbers.
-    Sensitive to non-normal distributions of distances! Always check plot before use.
-    """
-    def transform(self, pair: tuple) -> int:
-        """
-        Transforms a given pair of integer arrays into a single Euclidean distance.
-        @param pair: tuple of integer arrays.
-        @return int: Euclidean distance.
-        """
-        super().transform(pair)
-        return euclidean(*pair)
+Euclidean = Distance(transform_fn=euclidean)
+Cosine = Distance(transform_fn=cosine)
 
 
 class Alignment(Distance):
@@ -67,7 +66,6 @@ class Alignment(Distance):
         @param pair: tuple of two strings
         @return int: normalized alignment distance
         """
-        super().transform(pair)
         return pairwise2.align.localxx(pair[0], pair[1], score_only=True)
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
@@ -76,6 +74,25 @@ class Alignment(Distance):
         @param data: np.ndarray
         @return np.ndarray
         """
-        data = np.max(data) - data
+        data = np.max(data) - data  # Convert similarity scores into distances
         return super().postprocessor(data)
+
+
+class IncrementalDistance(Distance):
+    """
+    Incrementally applies a regular K-Mers based distance metric over raw sequences.
+    Use when not enough memory exists to fully encode a dataset into K-Mers with the specified K.
+    """
+    def __init__(self, distance: Distance, counter: KMerCounter):
+        super().__init__()
+        self.distance = distance
+        self.counter = counter
+
+    def transform(self, pair: tuple) -> int:
+        """
+        Converts the pair of sequences to K-Mers, then finds the distance.
+        """
+        kmer_pair = self.counter.str_to_kmer_counts(pair[0]), \
+            self.counter.str_to_kmer_counts(pair[1])
+        return self.distance.transform(kmer_pair)
 
