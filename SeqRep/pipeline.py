@@ -141,7 +141,8 @@ class Pipeline:
             if not self.quiet:
                 print('Creating search index...')
             self.index = BallTree(self.reprs)
-        dists, ind = self.index.query(self.preproc_reprs, k=n_neighbors)
+        query_enc = self.transform([query])
+        dists, ind = self.index.query(query_enc, k=n_neighbors)
         matches = [self.dataset.iloc[i] for i in ind[0]]
         return dists[0], matches
 
