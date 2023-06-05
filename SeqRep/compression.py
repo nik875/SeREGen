@@ -66,8 +66,8 @@ class Compressor:
                                                     self.batch_size * batches_per_it)
         result = [self.transform(counter.kmer_counts(i, silence=True), silence=True) for i in
                   (full_batches if self.quiet else tqdm(full_batches))]
-        final_kmers = counter.kmer_counts(last_batch)
-        final_compressed = self.transform(final_kmers)
+        final_kmers = counter.kmer_counts(last_batch, silence=True)
+        final_compressed = self.transform(final_kmers, silence=True)
         return np.concatenate(result + [final_compressed])
 
 
