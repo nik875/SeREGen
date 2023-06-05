@@ -1,6 +1,10 @@
 """
 Library for input compression before data is passed into a model.
 """
+import os
+import shutil
+import pickle
+import copy
 import multiprocessing as mp
 import numpy as np
 from tqdm import tqdm
@@ -11,13 +15,50 @@ from .kmers import KMerCounter
 
 
 class Compressor:
+    #pylint: disable=unused-argument
     """
     Abstract Compressor class used for compressing input data.
     """
+    _SAVE_EXCLUDE_VARS = []
     def __init__(self, postcomp_len: int, quiet: bool, batch_size=0):
         self.postcomp_len = postcomp_len
         self.quiet = quiet
         self.batch_size = batch_size
+        self.fit_called = False
+
+    def save(self, savedir: str):
+        """
+        Save the Compressor to the filesystem.
+        """
+        shutil.rmtree(savedir, ignore_errors=True)
+        os.makedirs(savedir)
+
+        to_pkl = copy.copy(self)  # Efficient shallow copy for pickling
+        for i in self._SAVE_EXCLUDE_VARS:  # Don't pickle attrs in _SAVE_EXCLUDE_VARS
+            delattr(to_pkl, i, None)
+
+        with open(os.path.join(savedir, 'compressor.pkl'), 'wb') as f:
+            pickle.dump(to_pkl, f)
+
+    @staticmethod
+    def load(savedir: str):
+        """
+        Load the Compressor from the filesystem.
+        """
+        if not os.path.exists(savedir) or not os.path.exists(savedir):
+            raise ValueError("Directory doesn't exist!")
+        if 'compressor.pkl' not in os.listdir(savedir):
+            raise ValueError('compressor.pkl is necessary!')
+        with open(os.path.join(savedir, 'compressor.pkl'), 'rb') as f:
+            obj = pickle.load(f)
+        # pylint: disable=protected-access
+        obj._load_special(savedir)
+        return obj
+
+    def _load_special(self, savedir: str):
+        """
+        Load any special variables from the savedir for this object. Called by Compressor.load().
+        """
 
     def _batch_data(self, data: np.ndarray, batch_size=None) -> tuple[np.ndarray, np.ndarray]:
         batch_size = batch_size or self.batch_size
@@ -35,6 +76,7 @@ class Compressor:
         @param data: data to fit to.
         @param quiet: whether to print output
         """
+        self.fit_called = True
 
     # pylint: disable=unused-argument
     def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
@@ -81,6 +123,7 @@ class PCA(Compressor):
         self.scaler = StandardScaler()
 
     def fit(self, data: np.ndarray):
+        super().fit(data)
         self.pca.fit(self.scaler.fit_transform(data))
 
     def transform(self, data: np.ndarray, silence=False):
@@ -108,6 +151,7 @@ class IPCA(Compressor):
             return list(it)
 
     def fit(self, data: np.ndarray):
+        super().fit(data)
         if not self.quiet:
             print(f'Fitting IPCA Compressor using CPUs: {self.jobs}...')
         data = self.scaler.fit_transform(data)
@@ -138,6 +182,7 @@ class AE(Compressor):
     """
     Train an autoencoder to compress the input data.
     """
+    _SAVE_EXCLUDE_VARS = ['encoder', 'decoder', 'ae']
     def __init__(self, inputs: tf.keras.layers.Layer, reprs: tf.keras.layers.Layer,
                  outputs: tf.keras.layers.Layer, repr_size: int, loss='mse', batch_size=100,
                  quiet=False):
@@ -161,6 +206,17 @@ class AE(Compressor):
         outputs = tf.keras.layers.Dense(data.shape[-1], activation=output_activation)(x)
         return cls(inputs, reprs, outputs, repr_size, loss=loss, batch_size=batch_size, quiet=quiet)
 
+    def save(self, savedir: str):
+        super().save(savedir)
+        self.encoder.save(os.path.join(savedir, 'encoder'))
+        self.decoder.save(os.path.join(savedir, 'decoder'))
+        self.ae.save(os.path.join(savedir, 'ae'))
+
+    def _load_special(self, savedir: str):
+        self.encoder = tf.keras.models.load_model(os.path.join(savedir, 'encoder'))
+        self.decoder = tf.keras.models.load_model(os.path.join(savedir, 'decoder'))
+        self.ae = tf.keras.models.load_model(os.path.join(savedir, 'ae'))
+
     def summary(self):
         """
         Print a summary of this autoencoder.
@@ -171,6 +227,7 @@ class AE(Compressor):
         """
         Train the autoencoder model on the given data. Uses early stopping to end training.
         """
+        super().fit(data)
         if not self.quiet:
             print('Training AE Compressor...')
         else:
