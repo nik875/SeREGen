@@ -136,14 +136,14 @@ class Pipeline:
         @return np.ndarray: Search results.
         """
         self._reprs_check()
+        self._fit_called_check()
         if self.index is None:  # If index hasn't been created, create it.
             if not self.quiet:
-                print('Creating search index (this could take a while)...')
+                print('Creating search index...')
             self.index = BallTree(self.reprs)
-        enc = self.preprocess_seqs(query)
-        dists, ind = self.index.query(enc, k=n_neighbors)
-        matches = [self.dataset.iloc[i] for i in ind]
-        return dists, matches
+        dists, ind = self.index.query(self.preproc_reprs, k=n_neighbors)
+        matches = [self.dataset.iloc[i] for i in ind[0]]
+        return dists[0], matches
 
 
 class KMerCountsPipeline(Pipeline):
@@ -151,8 +151,8 @@ class KMerCountsPipeline(Pipeline):
     Automated pipeline using KMer Counts. Optionally compresses input data before training model.
     """
     def __init__(self, K: int, paths: list[str], repr_size=2, header_parser='None', quiet=False,
-                 depth=3, counter_jobs=1, counter_chunksize=1, trim_to=0, compressor=None,
-                 comp_fit_sample_frac=1, comp_repr_size=0, **comp_args):
+                 depth=3, counter_jobs=1, counter_chunksize=1, dist=None, trim_to=0,
+                 compressor=None, comp_fit_sample_frac=1, comp_repr_size=0, **comp_args):
         super().__init__(paths, header_parser=header_parser, quiet=quiet)
         if trim_to:  # Optional sequence trimming
             self.dataset.trim_seqs(trim_to)
@@ -180,7 +180,7 @@ class KMerCountsPipeline(Pipeline):
         # Model (training is distributed by default across all available GPUs)
         builder = ModelBuilder((postcomp_len,), tf.distribute.MirroredStrategy())
         builder.dense(postcomp_len, depth=depth)
-        self.model = ComparativeEncoder.from_model_builder(builder, dist=cosine,
+        self.model = ComparativeEncoder.from_model_builder(builder, dist=dist or cosine,
                                                            output_dim=repr_size, quiet=quiet)
         if not quiet:
             self.model.summary()
