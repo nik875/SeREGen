@@ -148,7 +148,7 @@ class Pipeline:
                 kwargs = json.load(f)
         else:
             raise ValueError('kwargs.json file necessary!')
-        kwargs += cls._load_special(savedir)
+        kwargs.update(cls._load_special(savedir))
         obj = cls(**kwargs)
         if 'distance.pkl' in contents:
             with open(os.path.join(savedir, 'distance.pkl'), 'rb') as f:
