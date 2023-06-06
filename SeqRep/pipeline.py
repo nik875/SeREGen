@@ -287,7 +287,7 @@ class KMerCountsPipeline(Pipeline):
     def preprocess_seqs(self, seqs: list[str], batch_size=0) -> np.ndarray:
         return self.compressor.count_kmers(self.counter, seqs, batch_size)
 
-    def fit(self, preproc_batch_size=0, dist_on_preproc=False, incremental_dist=False,
+    def fit(self, preproc_batch_size=0, dist_on_preproc=False, incremental_dist=True,
             **model_fit_args):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
