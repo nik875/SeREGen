@@ -35,7 +35,7 @@ class Compressor:
 
         to_pkl = copy.copy(self)  # Efficient shallow copy for pickling
         for i in self._SAVE_EXCLUDE_VARS:  # Don't pickle attrs in _SAVE_EXCLUDE_VARS
-            delattr(to_pkl, i, None)
+            delattr(to_pkl, i)
 
         with open(os.path.join(savedir, 'compressor.pkl'), 'wb') as f:
             pickle.dump(to_pkl, f)
