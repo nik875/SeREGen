@@ -185,16 +185,18 @@ class AE(Compressor):
     _SAVE_EXCLUDE_VARS = ['encoder', 'decoder', 'ae']
     def __init__(self, inputs: tf.keras.layers.Layer, reprs: tf.keras.layers.Layer,
                  outputs: tf.keras.layers.Layer, repr_size: int, loss='mse', batch_size=100,
-                 quiet=False):
+                 quiet=False, epoch_limit=100, patience=2, val_split=.1):
         super().__init__(repr_size, quiet, batch_size)
         self.encoder = tf.keras.Model(inputs=inputs, outputs=reprs)
         self.decoder = tf.keras.Model(inputs=reprs, outputs=outputs)
         self.ae = tf.keras.Model(inputs=inputs, outputs=outputs)
         self.ae.compile(optimizer='adam', loss=loss)
+        self.epoch_limit = epoch_limit
+        self.patience = patience
+        self.val_split = val_split
 
     @classmethod
-    def auto(cls, data: np.ndarray, repr_size: int, output_activation=None, loss='mse',
-             quiet=False, batch_size=100):
+    def auto(cls, data: np.ndarray, repr_size: int, output_activation=None, **kwargs):
         """
         Automatically generate an autoencoder based on the input data. Recommended way to create
         an AECompressor.
@@ -204,7 +206,7 @@ class AE(Compressor):
         reprs = tf.keras.layers.Dense(repr_size)(x)
         x = tf.keras.layers.Dense(data.shape[-1], activation='relu')(reprs)
         outputs = tf.keras.layers.Dense(data.shape[-1], activation=output_activation)(x)
-        return cls(inputs, reprs, outputs, repr_size, loss=loss, batch_size=batch_size, quiet=quiet)
+        return cls(inputs, reprs, outputs, repr_size, **kwargs)
 
     def save(self, savedir: str):
         super().save(savedir)
@@ -223,11 +225,14 @@ class AE(Compressor):
         """
         self.ae.summary()
 
-    def fit(self, data: np.ndarray, epoch_limit=100, patience=2, val_split=.1):
+    def fit(self, data: np.ndarray, epoch_limit=None, patience=None, val_split=None):
         """
         Train the autoencoder model on the given data. Uses early stopping to end training.
         """
         super().fit(data)
+        epoch_limit = epoch_limit or self.epoch_limit
+        patience = patience or self.patience
+        val_split = val_split or self.val_split
         if not self.quiet:
             print('Training AE Compressor...')
         else:

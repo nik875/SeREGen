@@ -291,7 +291,10 @@ class KMerCountsPipeline(Pipeline):
             **model_fit_args):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
+        Automatically calls create_model() with default arguments if not already called.
         """
+        if not self.model:
+            self.create_model()
         super().fit(batch_size=preproc_batch_size)
         if incremental_dist:
             self.model.distance = IncrementalDistance(self.model.distance, self.counter)
