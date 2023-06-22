@@ -5,18 +5,21 @@ import os
 import shutil
 import pickle
 import json
+
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import scipy.stats as st
 from sklearn.neighbors import BallTree
-from .dataset_builder import DatasetBuilder, SILVAHeaderParser, COVIDHeaderParser
+
+from .dataset_builder import DatasetBuilder, SILVA_header_parser, COVID_header_parser
 from .visualize import repr_scatterplot
-from .kmers import KMerCounter
+from .kmers import KMerCounter, Nucleotide_AA
 from .compression import PCA, IPCA, AE, Compressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder
-from .distance import cosine, IncrementalDistance
+from .distance import cosine, IncrementalDistance, Alignment
 
 
 class Pipeline:
@@ -38,24 +41,24 @@ class Pipeline:
         if not isinstance(header_parser, str):
             builder = DatasetBuilder(header_parser)
         elif header_parser == 'SILVA':
-            builder = DatasetBuilder(SILVAHeaderParser())
+            builder = DatasetBuilder(SILVA_header_parser)
         elif header_parser == 'COVID':
-            builder = DatasetBuilder(COVIDHeaderParser())
+            builder = DatasetBuilder(COVID_header_parser)
         else:
             builder = DatasetBuilder()
         self.dataset = builder.from_fasta(paths)
         if trim_to:
             self.dataset.trim_seqs(trim_to)
 
-    # Must be implemented by subclass
+    # Should be implemented by subclass unless strings are passed directly as input
     # pylint: disable=unused-argument
     def preprocess_seq(self, seq):
         """
         Preprocesses a string sequence.
         @param seq: Sequence to preprocess.
-        @return np.ndarray: Returns None by default.
+        @return np.ndarray: Returns seq by default.
         """
-        return None
+        return seq
 
     # Should be overriden by subclass for efficient preprocessing
     def preprocess_seqs(self, seqs: list) -> list:
@@ -331,5 +334,169 @@ class KMerCountsPipeline(Pipeline):
             result['counter'] = pickle.load(f)
         if 'compressor' in contents:
             result['compressor'] = Compressor.load(os.path.join(savedir, 'compressor'))
+        return result
+
+
+class HomologousSequencePipeline(Pipeline):
+    """
+    Sequence-based alignment estimator that factors in homologous sequences (those with the same or
+    similar protein outputs despite minor mutations).
+    """
+    VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
+
+    def __init__(self, converter=None, model=None, quiet=False):
+        super().__init__(quiet)
+        self.converter = converter
+        self.model = model
+
+    def create_converter(self, *args, **kwargs):
+        """
+        Create a Nucleotide_AA converter for the Pipeline. Directly wraps constructor.
+        """
+        self.converter = Nucleotide_AA(*args, **kwargs)
+
+    def create_model(self, res='low', seq_len=.85, output_dim=2):
+        """
+        Create a model for the Pipeline.
+        @param res: Resolution of the model's encoding output. Available options are:
+            'low' (default): Basic dense neural network operating on top of learned embeddings for
+            input sequences.
+            'medium': Convolutional layer operating on 1/4 the length of input sequences.
+            'high': Convolutional layer + attention block operating on 1/4 the length of input
+            sequences.
+            'ultra': Convolutional layer + attention block operating on full length of input
+            sequences.
+        @param seq_len: Specifies input length of sequences to model. Three possibilities:
+            seq_len == None: Auto-detect the maximum sequence length and use as model input size.
+            0 < seq_len < 1: Ensure that this fraction of the total dataset is NOT truncated.
+            seq_len >= 1: Trim and pad directly to this length.
+        @param output_dim: Number of dimensions in output encodings (default 2).
+        """
+        if (seq_len is None or seq_len < 1) and self.dataset is None:
+            raise ValueError('Dataset must be loaded before autodetection of sequence length!')
+        if seq_len is not None and seq_len < 1:
+            target_zscore = st.ppf(seq_len)
+            lengths = self.dataset['seqs'].apply(len)
+            mean = np.mean(lengths)
+            std = np.std(lengths)
+            seq_len = target_zscore * std + mean
+        if res == 'low':
+            self.model = self.low_res_model(seq_len, output_dim)
+        elif res == 'medium':
+            self.model = self.medium_res_model(seq_len, output_dim)
+        elif res == 'high':
+            self.model = self.high_res_model(seq_len, output_dim)
+        elif res == 'ultra':
+            self.model = self.ultra_res_model(seq_len, output_dim)
+
+    @classmethod
+    def low_res_model(cls, seq_len: int, output_dim: int, compress_factor=1, depth=3):
+        """
+        Basic dense neural network operating on top of learned embeddings for input sequences.
+        """
+        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=8, max_len=seq_len,
+                                          distribute_strategy=tf.distribute.MirroredStrategy)
+        builder.transpose()
+        builder.dense(seq_len // compress_factor, depth=depth)
+        builder.transpose()
+        model = ComparativeEncoder.from_model_builder(builder, dist=Alignment,
+                                                      output_dim=output_dim)
+        return model
+
+    @classmethod
+    def medium_res_model(cls, seq_len: int, output_dim: int, compress_factor=4, conv_filters=16,
+                         conv_kernel_size=6):
+        """
+        Convolutional layer operating on 1/4 the length of input sequences.
+        """
+        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=12, max_len=seq_len,
+                                          distribute_strategy=tf.distribute.MirroredStrategy)
+        builder.transpose()
+        builder.dense(seq_len // compress_factor)
+        builder.transpose()
+        builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
+        model = ComparativeEncoder.from_model_builder(builder, dist=Alignment,
+                                                      output_dim=output_dim)
+        return model
+
+    @classmethod
+    def high_res_model(cls, seq_len: int, output_dim: int, compress_factor=4, conv_filters=32,
+                       conv_kernel_size=8, attn_heads=2):
+        """
+        Convolutional layer + attention block operating on 1/4 the length of input sequences.
+        """
+        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=16, max_len=seq_len,
+                                          distribute_strategy=tf.distribute.MirroredStrategy)
+        builder.transpose()
+        builder.dense(seq_len // compress_factor)
+        builder.transpose()
+        builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
+        builder.attention(attn_heads, seq_len // compress_factor)
+        model = ComparativeEncoder.from_model_builder(builder, dist=Alignment,
+                                                      output_dim=output_dim)
+        return model
+
+    @classmethod
+    def ultra_res_model(cls, seq_len: int, output_dim: int, compress_factor=1, conv_filters=64,
+                        conv_kernel_size=16, attn_heads=4):
+        """
+        Convolutional layer + attention block operating on full length of input sequences.
+        """
+        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=20, max_len=seq_len,
+                                          distribute_strategy=tf.distribute.MirroredStrategy)
+        builder.transpose()
+        builder.dense(seq_len // compress_factor)
+        builder.transpose()
+        builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
+        builder.attention(attn_heads, seq_len // compress_factor)
+        model = ComparativeEncoder.from_model_builder(builder, dist=Alignment,
+                                                      output_dim=output_dim)
+        return model
+
+    def preprocess_seq(self, seq: str) -> str:
+        if self.converter is None:
+            print('Warning: default converter being used...')
+            self.create_converter()
+        return self.converter.transform([seq])[0]
+
+    def preprocess_seqs(self, seqs: list[str]):
+        if self.converter is None:
+            print('Warning: default converter being used...')
+            self.create_converter()
+        return self.converter.transform(seqs)
+
+    def fit(self, **kwargs):
+        """
+        Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
+        Automatically calls create_model() with default arguments if not already called.
+        """
+        if not self.model:
+            print('Warning: using default low-res model...')
+            self.create_model()
+        super().fit()
+        if not self.quiet:
+            print('Training model...')
+        self.model.fit(self.preproc_reprs, **kwargs)
+
+    def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
+        """
+        Transform the given sequences. Accepts keyword arguments for ComparativeEncoder.transform().
+        """
+        super().transform_after_preproc(data)
+        return self.model.transform(data, **kwargs)
+
+    def save(self, savedir: str):
+        super().save(savedir)
+        with open(os.path.join(savedir, 'converter.pkl'), 'wb') as f:
+            pickle.dump(self.converter, f)
+
+    @staticmethod
+    def _load_special(savedir: str):
+        result = {}
+        contents = os.listdir(savedir)
+        if 'converter.pkl' not in contents:
+            raise ValueError('converter is necessary!')
+        with open(os.path.join(savedir, 'converter.pkl'), 'rb') as f:
+            result['converter'] = pickle.load(f)
         return result
 

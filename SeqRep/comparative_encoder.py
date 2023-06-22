@@ -51,6 +51,7 @@ class ComparativeEncoder:
         """
         self.quiet = quiet
         input_shape = encoder.layers[0].output_shape[0][1:]
+        input_dtype = encoder.layers[0].dtype
         self.repr_size = encoder.layers[-1].output_shape[1:]
         self.depth = len(encoder.layers)
         self.encoder = encoder
@@ -58,8 +59,8 @@ class ComparativeEncoder:
         self.strategy = strategy or tf.distribute.get_strategy()
 
         with self.strategy.scope():
-            inputa = tf.keras.layers.Input(input_shape, name='input_a')
-            inputb = tf.keras.layers.Input(input_shape, name='input_b')
+            inputa = tf.keras.layers.Input(input_shape, name='input_a', dtype=input_dtype)
+            inputb = tf.keras.layers.Input(input_shape, name='input_b', dtype=input_dtype)
             distances = DistanceLayer()(
                 encoder(inputa),
                 encoder(inputb),
@@ -107,8 +108,8 @@ class ComparativeEncoder:
         train_data = train_data.batch(batch_size)
 
         options = tf.data.Options()
-        # pylint: disable=line-too-long
-        options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
+        options.experimental_distribute.auto_shard_policy = \
+            tf.data.experimental.AutoShardPolicy.DATA
         train_data = train_data.with_options(options)
 
         self.comparative_model.fit(train_data, epochs=1)

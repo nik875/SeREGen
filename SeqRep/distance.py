@@ -52,6 +52,25 @@ def _cosine_transform(pair: tuple) -> int:
 cosine = Distance(transform_fn=_cosine_transform)
 
 
+class IncrementalDistance(Distance):
+    """
+    Incrementally applies a regular K-Mers based distance metric over raw sequences.
+    Use when not enough memory exists to fully encode a dataset into K-Mers with the specified K.
+    """
+    def __init__(self, distance: Distance, counter: KMerCounter):
+        super().__init__()
+        self.distance = distance
+        self.counter = counter
+
+    def transform(self, pair: tuple) -> int:
+        """
+        Converts the pair of sequences to K-Mers, then finds the distance.
+        """
+        kmer_pair = self.counter.str_to_kmer_counts(pair[0]), \
+            self.counter.str_to_kmer_counts(pair[1])
+        return self.distance.transform(kmer_pair)
+
+
 class Alignment(Distance):
     """
     Normalized alignment distance between two textual DNA sequences. Sequences must
@@ -73,23 +92,4 @@ class Alignment(Distance):
         """
         data = np.max(data) - data  # Convert similarity scores into distances
         return super().postprocessor(data)
-
-
-class IncrementalDistance(Distance):
-    """
-    Incrementally applies a regular K-Mers based distance metric over raw sequences.
-    Use when not enough memory exists to fully encode a dataset into K-Mers with the specified K.
-    """
-    def __init__(self, distance: Distance, counter: KMerCounter):
-        super().__init__()
-        self.distance = distance
-        self.counter = counter
-
-    def transform(self, pair: tuple) -> int:
-        """
-        Converts the pair of sequences to K-Mers, then finds the distance.
-        """
-        kmer_pair = self.counter.str_to_kmer_counts(pair[0]), \
-            self.counter.str_to_kmer_counts(pair[1])
-        return self.distance.transform(kmer_pair)
 

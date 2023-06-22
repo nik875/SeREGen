@@ -62,6 +62,8 @@ class KMerCounter:
     def str_to_kmers(self, seq: str) -> np.ndarray:
         """
         Convert a string sequence to integer kmers. Works around invalid base pairs.
+        Remember that values of 0 and 1 are also used by keras for pad and OOV tokens! Be sure to
+        add 2 before passing in a kmer sequence directly to a model.
         """
         # Split given string into valid parts and concatenate resulting kmer sequences for each part
         return np.concatenate([self._seq_to_kmers(i) for i in self._split_str(seq)])
@@ -84,7 +86,7 @@ class KMerCounter:
         # Split given string into parts and take sum of each kmer's total occurrences in each part
         return np.sum([self._seq_to_kmer_counts(i) for i in self._split_str(seq)], axis=0)
 
-    def _gen_kmers(self, seqs: np.ndarray, func: callable, use_mp: bool, silence=False) -> list:
+    def _apply(self, func: callable, seqs: np.ndarray, use_mp: bool, silence=False) -> list:
         """
         Avoids duplication of logic for kmer sequence/count generation.
         """
@@ -97,40 +99,80 @@ class KMerCounter:
             it = seqs if self.quiet else tqdm(seqs)
             return [func(i) for i in it]
 
-    def kmer_sequences(self, seqs: list[str]) -> list:
+    def kmer_sequences(self, seqs: list[str]) -> list[list[int]]:
         """
         Generate kmer sequences for a given array of string sequences.
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
+        Remember that values of 0 and 1 are also used by keras for pad and OOV tokens! Be sure to
+        add 2 before passing in a kmer sequence directly to a model.
         """
-        return self._gen_kmers(seqs, self.str_to_kmers, not self.debug)
+        return self._apply(self.str_to_kmers, seqs, not self.debug)
 
     def kmer_counts(self, seqs: list[str], silence=False) -> np.ndarray:
         """
         Generate kmer counts for a given array of string sequences.
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         """
-        return np.array(self._gen_kmers(seqs, self.str_to_kmer_counts, not self.debug, silence))
+        return np.array(self._apply(self.str_to_kmer_counts, seqs, not self.debug, silence))
 
-    def _ohe_seq(self, seq: np.ndarray) -> np.ndarray:
-        """
-        One-hot encode a numerical sequence.
-        """
-        s = np.zeros((len(seq), 4 ** self.k))
-        s[np.arange(len(seq)), seq] = 1
-        return s
 
-    def kmer_sequences_ohe(self, seqs: list, trim_to=None) -> list:
+class Nucleotide_AA(KMerCounter):
+    """
+    Convert a nucleotide sequence to a "comprehensive" amino acid sequence containing all three
+    possible start shifts. 'J', 'O', 'U', 'X' are letters unused in standard amino acid one-letter
+    codes. We thus use X to represent all three kinds of stop codon.
+    """
+    AA_LOOKUP = np.array([
+        'K',  # AAA
+        'N',  # AAC
+        'K',  # AAG
+        'N',  # AAU
+        'T', 'T', 'T', 'T',  # AC*
+        'R',  # AGA
+        'S',  # AGC
+        'R',  # AGG
+        'S',  # AGU
+        'I',  # AUA
+        'I',  # AUC
+        'M',  # AUG
+        'I',  # AUU
+        'Q',  # CAA
+        'H',  # CAC
+        'Q',  # CAG
+        'H',  # CAU
+        'P', 'P', 'P', 'P',  # CC*
+        'R', 'R', 'R', 'R',  # CG*
+        'L', 'L', 'L', 'L',  # CU*
+        'E',  # GAA
+        'D',  # GAC
+        'E',  # GAG
+        'D',  # GAU
+        'A', 'A', 'A', 'A',  # GC*
+        'G', 'G', 'G', 'G',  # GG*
+        'V', 'V', 'V', 'V',  # GU*
+        'X',  # UAA (STOP)
+        'Y',  # UAC
+        'X',  # UAG (STOP)
+        'Y',  # UAU
+        'S', 'S', 'S', 'S',  # UC*
+        'X',  # UGA  (STOP)
+        'C',  # UGC
+        'W',  # UGG
+        'C',  # UGU
+        'L',  # UUA
+        'F',  # UUC
+        'L',  # UUG
+        'F'  # UUU
+    ])
+
+    def __init__(self, **kwargs):
+        super().__init__(3, **kwargs)
+
+    def transform(self, seqs: list[str]) -> list[str]:
         """
-        Generate kmer sequences for a given array of string sequences. Result is one-hot encoded.
-        Sequences do not need to be uniform length. Invalid/unknown base pairs will be ignored.
+        Convert the given nucleotide sequences to comprehensive amino acid sequences.
+        @param seqs: nucleotide sequences to convert.
         """
         kmers = self.kmer_sequences(seqs)
-        if trim_to is None:
-            return self._gen_kmers(kmers, self._ohe_seq, False)
-        assert all(len(i) >= trim_to for i in kmers)
-        kmers = np.stack([i[:trim_to] for i in kmers])
-        result = np.zeros((*kmers.shape, 4 ** self.k))
-        indices = np.concatenate(np.array(np.meshgrid(np.arange(kmers.shape[0]),
-                                                      np.arange(kmers.shape[1]))).T)
-        result[indices[:, 0], indices[:, 1], kmers.flatten()] = 1
-        return result
+        return [''.join(self.AA_LOOKUP[i]) for i in kmers]
+

@@ -1,10 +1,17 @@
+"""
+Module to help build encoders for ComparativeEncoder. It is recommended to use ModelBuilder.
+"""
 import tensorflow as tf
 from .exceptions import IncompatibleDimensionsException
 
 
 class AttentionBlock(tf.keras.layers.Layer):
+    """
+    Custom AttentionBlock layer that also contains dropout and batch normalization.
+    Similar to the Transformer encoder block.
+    """
     def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
-        super(AttentionBlock, self).__init__()
+        super().__init__()
         self.att = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
         self.ffn = tf.keras.Sequential(
             [tf.keras.layers.Dense(ff_dim, activation="relu"), tf.keras.layers.Dense(embed_dim)]
@@ -15,6 +22,9 @@ class AttentionBlock(tf.keras.layers.Layer):
         self.dropout2 = tf.keras.layers.Dropout(rate)
 
     def call(self, inputs, training):
+        """
+        Calls attention, dropout, normalization, feed forward, and second normalization layers.
+        """
         attn_output = self.att(inputs, inputs)
         attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(inputs + attn_output)
@@ -27,16 +37,67 @@ class ModelBuilder:
     """
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
-    def __init__(self, input_shape: tuple, distribute_strategy=None):
+    def __init__(self, input_shape: tuple, input_dtype=None, distribute_strategy=None):
         """
         Create a new ModelBuilder object.
         @param input_shape: Shape of model input.
-        @param distribute_strategy: strategy to use for distributed training. defaults to training on a single GPU.
+        @param input_dtype: Optional dtype for model input.
+        @param distribute_strategy: strategy to use for distributed training. Defaults to training
+        on a single GPU.
         """
         self.strategy = distribute_strategy or tf.distribute.get_strategy()
         with self.strategy.scope():
-            self.inputs = tf.keras.layers.Input(input_shape)
+            self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)
         self.current = self.inputs
+
+    @classmethod
+    def text_input(cls, vocab: list[str], embed_dim=None, max_len=None, **kwargs):
+        """
+        Factory function that returns a new ModelBuilder object which can receive text input. Adds a
+        TextVectorization and an Embedding layer to preprocess string input data. Split happens
+        along characters. Additional keyword arguments are passed to ModelBuilder constructor.
+
+        @param vocab: Vocabulary to adapt TextVectorization layer to. String of characters with no
+        duplicates.
+        @param embed_dim: Size of embeddings to generate for each character in sequence. If None or
+        not passed, defaults to one hot encoding of input sequences.
+        @param max_len: Length to trim and pad input sequences to.
+        @return ModelBuilder: Newly created object.
+        """
+        obj = cls((1,), input_dtype=tf.string, **kwargs)
+        obj.current = tf.keras.layers.TextVectorization(output_sequence_length=max_len,
+                                                        output_mode='int',
+                                                        vocabulary=vocab,
+                                                        standardize=None,
+                                                        split='character')(obj.current)
+        if embed_dim:
+            obj.embedding(len(vocab) + 2, embed_dim, input_length = max_len)
+        else:
+            obj.one_hot_encoding(len(vocab) + 2)
+        return obj
+
+    def embedding(self, input_dim: int, output_dim: int, mask_zero=True, **kwargs):
+        """
+        Adds an Embedding layer to preprocess ordinally encoded input sequences.
+        Arguments are passed directly to Embedding constructor.
+        @param input_dim: Vocabulary size for Embedding input.
+        @param output_dim: Size of encoding for each character in the sequences.
+        @param mask_zero: Whether to generate a mask for zero values in the input. Defaults to True.
+        """
+        self.current = tf.keras.layers.Embedding(input_dim, output_dim,
+                                                 mask_zero=mask_zero,
+                                                 **kwargs)(self.current)
+
+    def one_hot_encoding(self, num_tokens: int, **kwargs):
+        """
+        Adds a CategoryEncoding layer configured to one-hot encode input sequences. Useful when
+        vocabulary size is very small (i.e. model is directly processing nucleotides).
+        @param num_tokens: Number of tokens to encode. All integer inputs must fall within
+        0 <= token <= num_tokens.
+        """
+        self.current = tf.keras.layers.CategoryEncoding(num_tokens=num_tokens,
+                                                        output_mode='one_hot',
+                                                        **kwargs)(self.current)
 
     def summary(self):
         """
@@ -46,7 +107,7 @@ class ModelBuilder:
 
     def _shape(self) -> tuple:
         """
-        Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size.
+        Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size
         """
         return tuple(self.current.shape[1:])
 
@@ -77,6 +138,19 @@ class ModelBuilder:
         with self.strategy.scope():
             self.current = tf.keras.layers.Reshape(new_shape, **kwargs)(self.current)
 
+    def transpose(self, a=0, b=1, **kwargs):
+        """
+        Transposes the input with a Reshape layer over the two given axes (flips them).
+        First dimension for batch size is not included.
+        @param a: First axis to transpose, defaults to 0.
+        @param b: Second axis to transpose, defaults to 1.
+        """
+        shape = list(self._shape())
+        tmp = shape[b]
+        shape[b] = shape[a]
+        shape[a] = tmp
+        self.reshape(tuple(shape), **kwargs)
+
     def flatten(self, **kwargs):
         """
         Add a flatten layer. Additional keyword arguments accepted.
@@ -102,26 +176,18 @@ class ModelBuilder:
         """
         with self.strategy.scope():
             for _ in range(depth):
-                self.current = tf.keras.layers.Dense(size, activation=activation, **kwargs)(self.current)
-
-    def embeddings(self, size: int, activation='relu', **kwargs):
-        """
-        Expand dimensions and create `size` embeddings.
-        @param size: size of embeddings
-        @param activation: activation function to use for dense layers
-        Additional keyword arguments are accepted for Dense layer constructor.
-        """
-        orig_shape = self._shape()
-        with self.strategy.scope():
-            self.dense(size * self._shape()[-1], activation=activation, **kwargs)
-            self.reshape((*orig_shape, size))
+                self.current = tf.keras.layers.Dense(size, activation=activation,
+                                                     **kwargs)(self.current)
 
     def conv1D(self, filters: int, kernel_size: int, output_size: int, **kwargs):
         """
-        Add a convolutional layer. Output passes through feed forward layer with size specified by output_dim.
+        Add a convolutional layer.
+        Output passes through feed forward layer with size specified by output_dim.
         @param filters: number of convolution filters to use.
-        @param kernel_size: size of convolution kernel. Must be less than the first dimension of prior layer's shape.
+        @param kernel_size: size of convolution kernel. Must be less than the first dimension of
+        prior layer's shape.
         @param output_size: output size of the layer.
+        @param activation: activation function.
         Additional keyword arguments are passed to TensorFlow Conv1D layer constructor.
         """
         if len(self._shape()) != 2:
@@ -130,9 +196,11 @@ class ModelBuilder:
             raise IncompatibleDimensionsException()
 
         with self.strategy.scope():
-            self.current = tf.keras.layers.Conv1D(filters, kernel_size, **kwargs)(self.current)
+            self.current = tf.keras.layers.Conv1D(filters, kernel_size, activation='relu',
+                                                  **kwargs)(self.current)
             self.current = tf.keras.layers.MaxPooling1D()(self.current)
-            self.current = tf.keras.layers.Flatten()(self.current)  # Removes extra dimension from shape
+            # Removes extra dimension from shape
+            self.current = tf.keras.layers.Flatten()(self.current)
             self.current = tf.keras.layers.BatchNormalization()(self.current)
         self.dense(output_size, activation='relu')
 
@@ -147,6 +215,7 @@ class ModelBuilder:
             raise IncompatibleDimensionsException()
 
         with self.strategy.scope():
-            self.current = AttentionBlock(self._shape()[1], num_heads, output_size, rate=rate)(self.current)
+            self.current = AttentionBlock(self._shape()[1], num_heads, output_size,
+                                          rate=rate)(self.current)
             self.current = tf.keras.layers.BatchNormalization()(self.current)
 

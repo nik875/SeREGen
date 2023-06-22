@@ -1,13 +1,16 @@
+"""
+Classes to help load and preprocess a dataset from the filesystem.
+"""
 import typing
 import matplotlib.pyplot as plt
 
 import numpy as np
 import pandas as pd
 from Bio import SeqIO
+import tensorflow as tf
 from tqdm import tqdm
 
-from .kmers import KMerCounter
-from .ohe import OneHotEncoder
+from .kmers import KMerCounter, Nucleotide_AA
 tqdm.pandas()
 
 
@@ -20,11 +23,17 @@ class _SequenceTrimmer:
         self.length = length
 
     def trim(self, seq: str) -> str:
+        """
+        Performs trimming.
+        """
         seq = seq[:self.length]
         return seq + ('N' * (self.length - len(seq)))
 
 
 class LabelSeries(pd.Series):
+    """
+    Extends pd.Series, contains additional methods to generate masks based on labels.
+    """
     _metadata = ['labels']
 
     @property
@@ -60,6 +69,15 @@ class LabelSeries(pd.Series):
 
 
 class DatasetBuilder:
+    """
+    Constructs a Dataset from input files.
+    """
+    def __init__(self, header_parser=None):
+        """
+        @param header_parser: HeaderParser object for header parsing
+        """
+        self.header_parser = header_parser
+
     @staticmethod
     def _read_fasta(path: str):
         """
@@ -74,7 +92,13 @@ class DatasetBuilder:
 
     @staticmethod
     def _dataset_decorator(cls_type):
+        """
+        Adds necessary _constructor and _constructor_sliced properties to new Dataset objects.
+        """
         class DatasetDecorated(Dataset):
+            """
+            Defines _constructor and _constructor_sliced for Dataset.
+            """
             @property
             def _constructor(self):
                 return DatasetDecorated
@@ -101,12 +125,6 @@ class DatasetBuilder:
         labels = self.header_parser(raw_headers) if self.header_parser else None
         cls = self._dataset_decorator(type(labels)) if labels is not None else Dataset
         return cls({'orig_seqs': seqs, 'seqs': seqs, 'raw_headers': raw_headers, 'labels': labels})
-
-    def __init__(self, header_parser=None):
-        """
-        @param header_parser: HeaderParser object for header parsing
-        """
-        self.header_parser = header_parser
 
 
 class Dataset(pd.DataFrame):
@@ -162,35 +180,34 @@ class Dataset(pd.DataFrame):
         trimmer = _SequenceTrimmer(length)
         self['seqs'] = self['orig_seqs'].apply(trimmer.trim)
 
-    @staticmethod
-    def _encode_sequence(seq: str) -> np.ndarray:
+    def gen_kmer_seqs(self, K=-1, jobs=1, chunksize=1, output_len=None, progress=True,
+                      avoid_pad=True, avoid_oov=False, counter=None) -> list[np.ndarray]:
         """
-        One hot encode a single sequence.
-        @param seq: string sequence with padding.
-        @return np.ndarray: Encoded sequence
+        Convert all sequences to ordinal encoded kmer sequences.
+        @param output_len: If given, trims and pads sequences to this length.
+        @param avoid_pad: Adds 1 to all kmer values to dodge pad token. True by default.
+        @param avoid_oov: Additionally adds 1 to all kmer values to dodge oov token. False by
+        default.
         """
-        enc = OneHotEncoder()
-        return enc.encode_str(seq)
+        if counter is None and K == -1:
+            raise ValueError('Either K must be specified or a KMerCounter object must be passed!')
+        counter = counter or KMerCounter(K, jobs=jobs, chunksize=chunksize, quiet=not progress)
+        kmers = counter.kmer_sequences(self['seqs'].to_numpy())
+        if avoid_pad or avoid_oov:  # Ensures no kmer values conflict with special tokens.
+            kmers = [i + int(avoid_pad) + int(avoid_oov) for i in kmers]
+        if not output_len:
+            return kmers
+        return tf.keras.utils.pad_sequences(kmers, maxlen=output_len, value=0)
 
-    def one_hot_encode(self, jobs=1, chunksize=1, trim_to=None, progress=True):
+    def aa_seqs(self, jobs=1, chunksize=1, progress=True, converter=None) -> list[str]:
         """
-        One hot encode all sequences in this dataset.
-        @param jobs: number of multiprocessing jobs
-        @param chunksize: chunksize for multiprocessing
-        @param progress: optional progress bar
+        Returns amino acid sequences based on the sliding window kmers method. Includes all possible
+        interpretations of the underlying nucleotide sequences. Non-invertible.
         """
-        enc = OneHotEncoder(jobs=jobs, chunksize=chunksize)
-        return enc.encode_seqs(self['seqs'].to_numpy(), trim_to=trim_to, quiet=not progress)
+        converter = converter or Nucleotide_AA(jobs=jobs, chunksize=chunksize, progress=progress)
+        return converter.transform(self['seqs'].to_numpy())
 
-    def gen_kmer_seqs(self, K, jobs=1, chunksize=1, trim_to=None, progress=True) -> list:
-        """
-        Convert all sequences to one-hot encoded kmer sequences.
-        """
-        counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
-        return counter.kmer_sequences_ohe(self['seqs'].to_numpy(), trim_to=trim_to,
-                                          quiet=not progress)
-
-    def count_kmers(self, K: int, jobs=1, chunksize=1, progress=True) -> np.ndarray:
+    def count_kmers(self, K=-1, jobs=1, chunksize=1, progress=True, counter=None) -> np.ndarray:
         """
         Count kmers for all sequences.
         @param K: Length of sequences to match.
@@ -199,8 +216,10 @@ class Dataset(pd.DataFrame):
         @param progress: optional progress bar
         @return np.ndarray: counts of each kmer for all sequences
         """
-        counter = KMerCounter(K, jobs=jobs, chunksize=chunksize)
-        return counter.kmer_counts(self['seqs'].to_numpy(), quiet=not progress)
+        if counter is None and K == -1:
+            raise ValueError('Either K must be specified or a KMerCounter object must be passed!')
+        counter = counter or KMerCounter(K, jobs=jobs, chunksize=chunksize, quiet=not progress)
+        return counter.kmer_counts(self['seqs'].to_numpy())
 
 
 class HeaderParser:
@@ -227,6 +246,9 @@ class HeaderParser:
         @param label_cols: list of labels
         """
         class LabelSeriesDecorated(LabelSeries):
+            """
+            Defines _constructor for LabelSeries class.
+            """
             labels = label_cols
 
             @property
@@ -244,29 +266,15 @@ class HeaderParser:
         return cls([self.label_extractor(i) for i in data])
 
 
-class SILVAHeaderParser(HeaderParser):
-    """
-    Predefined header parser for the SILVA dataset.
-    """
-    def __init__(self):
-        """
-        Passes a custom label_extractor and label_cols to superclass.
-        """
-        def tax_extractor(header: str):
-            return np.array(' '.join(header.split(' ')[1:]).split(';'))
-        super().__init__(tax_extractor, ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus',
-                                         'Species'])
+
+def _silva_tax_extractor(header: str):
+    return np.array(' '.join(header.split(' ')[1:]).split(';'))
+SILVA_header_parser = HeaderParser(_silva_tax_extractor,
+                                   ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus',
+                                    'Species'])
 
 
-class COVIDHeaderParser(HeaderParser):
-    """
-    Predefined header parser for COVID nucleotide sequence data downloads from NCBI
-    """
-    def __init__(self):
-        """
-        Passes a custom label_extractor and label_cols to superclass.
-        """
-        def label_extractor(header: str):
-            return np.array([header.split('|')[2]], dtype=str)
-        super().__init__(label_extractor, ['Variant'])
+def _covid_variant_extractor(header: str):
+    return np.array([header.split('|')[2]], dtype=str)
+COVID_header_parser = HeaderParser(_covid_variant_extractor, ['Variant'])
 
