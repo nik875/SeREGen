@@ -402,7 +402,7 @@ class HomologousSequencePipeline(Pipeline):
         Basic dense neural network operating on top of learned embeddings for input sequences.
         """
         builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=8, max_len=seq_len,
-                                          distribute_strategy=tf.distribute.MirroredStrategy)
+                                          distribute_strategy=tf.distribute.MirroredStrategy())
         builder.transpose()
         builder.dense(seq_len // compress_factor, depth=depth)
         builder.transpose()
@@ -417,7 +417,7 @@ class HomologousSequencePipeline(Pipeline):
         Convolutional layer operating on 1/4 the length of input sequences.
         """
         builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=12, max_len=seq_len,
-                                          distribute_strategy=tf.distribute.MirroredStrategy)
+                                          distribute_strategy=tf.distribute.MirroredStrategy())
         builder.transpose()
         builder.dense(seq_len // compress_factor)
         builder.transpose()
@@ -433,7 +433,7 @@ class HomologousSequencePipeline(Pipeline):
         Convolutional layer + attention block operating on 1/4 the length of input sequences.
         """
         builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=16, max_len=seq_len,
-                                          distribute_strategy=tf.distribute.MirroredStrategy)
+                                          distribute_strategy=tf.distribute.MirroredStrategy())
         builder.transpose()
         builder.dense(seq_len // compress_factor)
         builder.transpose()
@@ -450,7 +450,7 @@ class HomologousSequencePipeline(Pipeline):
         Convolutional layer + attention block operating on full length of input sequences.
         """
         builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=20, max_len=seq_len,
-                                          distribute_strategy=tf.distribute.MirroredStrategy)
+                                          distribute_strategy=tf.distribute.MirroredStrategy())
         builder.transpose()
         builder.dense(seq_len // compress_factor)
         builder.transpose()
