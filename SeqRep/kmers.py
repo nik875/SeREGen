@@ -168,11 +168,16 @@ class Nucleotide_AA(KMerCounter):
     def __init__(self, **kwargs):
         super().__init__(3, **kwargs)
 
+    def _kmer_seq_to_aa(self, seq: np.ndarray) -> str:
+        return ''.join(self.AA_LOOKUP[seq])
+
     def transform(self, seqs: list[str]) -> list[str]:
         """
         Convert the given nucleotide sequences to comprehensive amino acid sequences.
         @param seqs: nucleotide sequences to convert.
         """
         kmers = self.kmer_sequences(seqs)
-        return [''.join(self.AA_LOOKUP[i]) for i in tqdm(kmers)]
+        if not self.quiet:
+            print('Converting to amino acid sequences...')
+        return self._apply(self._kmer_seq_to_aa, kmers, not self.debug)
 
