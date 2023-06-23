@@ -50,10 +50,11 @@ class ModelBuilder:
             self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)
         self.current = self.inputs
 
-    def _apply_strategy(self, fn):
-        def in_strategy(*args, **kwargs):
+    @staticmethod
+    def _apply_strategy(fn):
+        def in_strategy(self, *args, **kwargs):
             with self.strategy.scope():
-                fn(*args, **kwargs)
+                fn(self, *args, **kwargs)
         return in_strategy
 
     @classmethod
