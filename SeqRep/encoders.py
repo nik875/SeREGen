@@ -50,7 +50,7 @@ class ModelBuilder:
             self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)
         self.current = self.inputs
 
-    @staticmethod
+    # pylint: disable=no-self-argument,not-callable
     def _apply_strategy(fn):
         def in_strategy(self, *args, **kwargs):
             with self.strategy.scope():
