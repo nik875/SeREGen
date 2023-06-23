@@ -384,7 +384,7 @@ class HomologousSequencePipeline(Pipeline):
             lengths = self.dataset['seqs'].apply(len)
             mean = np.mean(lengths)
             std = np.std(lengths)
-            seq_len = target_zscore * std + mean
+            seq_len = int(target_zscore * std + mean)
         if res == 'low':
             self.model = self.low_res_model(seq_len, output_dim)
         elif res == 'medium':
