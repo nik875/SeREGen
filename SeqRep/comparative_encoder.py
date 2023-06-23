@@ -5,6 +5,7 @@ import time
 import multiprocessing as mp
 
 import numpy as np
+from scipy.spatial.distance import euclidean
 import tensorflow as tf
 from keras import backend as K
 from tqdm import tqdm
@@ -39,6 +40,7 @@ class DistanceLayer(tf.keras.layers.Layer):
         return tf.reduce_sum(tf.square(a - b), -1)
 
 
+# pylint: disable=too-many-instance-attributes
 class ComparativeEncoder:
     """
     Generic comparative encoder that can fit to data and transform sequences.
@@ -67,6 +69,14 @@ class ComparativeEncoder:
             )
             self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
             self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
+
+            dec_input = tf.keras.layers.Input((1,))
+            x = dec_input
+            for _ in range(3):
+                x = tf.keras.layers.Dense(4, activation='relu')(x)
+            x = tf.keras.layers.Dense(1, activation='relu')
+            self.decoder = tf.keras.Model(inputs=dec_input, outputs=x)
+            self.decoder.compile(optimizer='adam', loss='mse')
 
     @classmethod
     def from_model_builder(cls, obj, dist=None, quiet=False, **compile_params):
@@ -140,20 +150,65 @@ class ComparativeEncoder:
                 epoch()
                 print(f'Epoch time: {time.time() - start}')
 
-    def transform(self, data: np.ndarray, progress=True, batch_size=100) -> np.ndarray:
+    def fit_decoder(self, data: np.ndarray, distance_on=None, batch_size=1000, epoch_limit=100,
+                    patience=2, jobs=1, chunksize=1, transform_batch_size=0):
+        """
+        Fit the distance decoder to the given sequence data.
+        """
+        start = time.time()
+        rng = np.random.default_rng()
+        p1 = rng.permutation(data.shape[0])
+        y1 = distance_on[p1]
+        p2 = rng.permutation(data.shape[0])
+        y2 = distance_on[p2]
+
+        with mp.Pool(jobs) as p:
+            y = np.array(list(tqdm(p.imap(self.distance.transform, zip(y1, y2),
+                                          chunksize=chunksize), total=y1.shape[0])))
+        # Do not postprocess distances. The idea is that transform should provide a meaningful
+        # distance, even if the postprocessed distances only have meaning in context of the current
+        # dataset because of normalization.
+        distance_on = distance_on if distance_on is not None else data
+        encodings = self.transform(data, batch_size=transform_batch_size)
+        x1, x2 = encodings[p1], encodings[p2]
+        if not self.quiet:
+            print('Calculating euclidean distances between encodings...')
+        x = np.fromiter((euclidean(x1[i], x2[i]) for i in (range(len(y)) if self.quiet else
+                                                        tqdm(range(len(y))))), dtype=np.floatc)
+        def fit():
+            return self.decoder.fit(x, y, epochs=epoch_limit, batch_size=batch_size,
+                                    validation_split=.1,
+                                    callbacks=[tf.keras.callbacks.EarlyStopping(
+                                        metric='val_loss', patience=patience)])
+        if self.quiet:
+            suppress_output(fit)
+        else:
+            print('Training decoder...')
+            fit()
+            print(f'Total time taken: {time.time() - start}')
+
+    def transform(self, data: np.ndarray, batch_size=0) -> np.ndarray:
         """
         Transform the given data into representations using trained model.
-
         @param data: np.ndarray containing all sequences to transform.
-        @param progress: Shows a progress bar. progress=True slows down execution due to batching
-        in TensorFlow's .predict() as opposed to .__call__(). batch_size argument is also required
-        for this feature.
-        @param batch_size: Batch size for .predict(), not required if not using progress.
+        @param batch_size: Batch size for .predict(), required for progress bar. Slows execution.
         @return np.ndarray: Representations for all sequences in data.
         """
-        if progress and not self.quiet:
-            return self.encoder.predict(data)
-        return self.encoder(data, batch_size=batch_size)
+        if batch_size:
+            return self.encoder.predict(data, batch_size=batch_size)
+        if not self.quiet:
+            print('Transforming data (specify batch_size for progress bar)...')
+        return self.encoder(data)
+
+    def transform_distances(self, data: np.ndarray, batch_size=0) -> np.ndarray:
+        """
+        Transform the given distances between this model's encodings into predicted true distances.
+        """
+        if batch_size:
+            return self.decoder.predict(data, batch_size=batch_size)
+        if not self.quiet:
+            print('Transforming distances (specify batch_size for progress bar)...')
+        return self.decoder(data)
 
     def save(self, path: str):
         """

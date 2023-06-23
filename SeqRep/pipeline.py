@@ -199,9 +199,11 @@ class Pipeline:
             raise ValueError('Incompatible representation dimensions!')
         self.visualize_axes(0, 1, **kwargs)
 
-    def search(self, query: list[str], n_neighbors=1) -> tuple[np.ndarray, list[pd.Series]]:
+    def search(self, query: list[str], n_neighbors=1,
+               **kwargs) -> tuple[np.ndarray, list[pd.Series]]:
         """
-        Search the dataset for the most similar sequences to the query.
+        Search the dataset for the most similar sequences to the query. Accepts keyword arguments to
+        ComparativeEncoder.transform_distances().
         @param query: List of string sequences to find similar sequences to.
         @param n_neighbors: Number of neighbors to find for each sequence. Defaults to 1.
         @return np.ndarray: Search results.
@@ -215,7 +217,7 @@ class Pipeline:
         query_enc = self.transform([query])
         dists, ind = self.index.query(query_enc, k=n_neighbors)
         matches = [self.dataset.iloc[i] for i in ind[0]]
-        return dists[0], matches
+        return self.model.transform_distances(dists[0]), matches
 
 
 class KMerCountsPipeline(Pipeline):
@@ -309,6 +311,9 @@ class KMerCountsPipeline(Pipeline):
         if not self.quiet:
             print('Training model...')
         self.model.fit(self.preproc_reprs, distance_on=distance_on, **model_fit_args)
+        dec_fit_args = {k:v for k, v in model_fit_args if k in ['jobs', 'chunksize']}
+        self.model.fit_decoder(self.preproc_reprs, distance_on=distance_on, epoch_limit=1,
+                               **dec_fit_args)
 
     def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
         """
@@ -375,7 +380,7 @@ class HomologousSequencePipeline(Pipeline):
         if (seq_len is None or seq_len < 1) and self.dataset is None:
             raise ValueError('Dataset must be loaded before autodetection of sequence length!')
         if seq_len is not None and seq_len < 1:
-            target_zscore = st.ppf(seq_len)
+            target_zscore = st.norm.ppf(seq_len)
             lengths = self.dataset['seqs'].apply(len)
             mean = np.mean(lengths)
             std = np.std(lengths)
@@ -388,6 +393,8 @@ class HomologousSequencePipeline(Pipeline):
             self.model = self.high_res_model(seq_len, output_dim)
         elif res == 'ultra':
             self.model = self.ultra_res_model(seq_len, output_dim)
+        if not self.quiet:
+            self.model.summary()
 
     @classmethod
     def low_res_model(cls, seq_len: int, output_dim: int, compress_factor=1, depth=3):
@@ -477,6 +484,8 @@ class HomologousSequencePipeline(Pipeline):
         if not self.quiet:
             print('Training model...')
         self.model.fit(self.preproc_reprs, **kwargs)
+        kwargs = {k:v for k, v in kwargs if k in ['jobs', 'chunksize']}
+        self.model.fit_decoder(self.preproc_reprs, epoch_limit=1, **kwargs)
 
     def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
         """

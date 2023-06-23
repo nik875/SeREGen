@@ -8,7 +8,7 @@ from Bio import pairwise2
 from .kmers import KMerCounter
 
 
-# pylint: disable=method-hidden, unused-argument
+# pylint: disable=method-hidden
 class Distance:
     """
     Abstract class representing a distance metric for two sequences.
@@ -24,6 +24,7 @@ class Distance:
         self.transform = transform_fn or self.transform
         self.postprocessor = postprocessor_fn or self.postprocessor
 
+    #pylint: disable=unused-argument
     def transform(self, pair: tuple) -> int:
         """
         Transform a pair of elements into a single integer distance between those elements.
@@ -78,7 +79,7 @@ class Alignment(Distance):
     """
     def transform(self, pair: tuple) -> int:
         """
-        Transforms a single pair of strings into a similarity score.
+        Transforms a single pair of strings into a SIMILARITY SCORE.
         @param pair: tuple of two strings
         @return int: normalized alignment distance
         """
