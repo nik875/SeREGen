@@ -121,6 +121,7 @@ class ModelBuilder:
         """
         return tuple(self.current.shape[1:])
 
+    @_apply_strategy
     def compile(self, output_dim=2) -> tf.keras.Model:
         """
         Create and return an encoder model.
@@ -129,8 +130,7 @@ class ModelBuilder:
         """
         self.flatten()
         self.dense(output_dim, activation=None)  # Create special output layer
-        with self.strategy.scope():
-            return tf.keras.Model(inputs=self.inputs, outputs=self.current)
+        return tf.keras.Model(inputs=self.inputs, outputs=self.current)
 
     def custom_layer(self, layer: tf.keras.layers.Layer):
         """
