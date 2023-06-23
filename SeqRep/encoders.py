@@ -132,21 +132,21 @@ class ModelBuilder:
         self.dense(output_dim, activation=None)  # Create special output layer
         return tf.keras.Model(inputs=self.inputs, outputs=self.current)
 
+    @_apply_strategy
     def custom_layer(self, layer: tf.keras.layers.Layer):
         """
         Add a custom layer to the model.
         @param layer: TensorFlow layer to add.
         """
-        with self.strategy.scope():
-            self.current = layer(self.current)
+        self.current = layer(self.current)
 
+    @_apply_strategy
     def reshape(self, new_shape: tuple, **kwargs):
         """
         Add a reshape layer. Additional keyword arguments accepted.
         @param new_shape: tuple new shape.
         """
-        with self.strategy.scope():
-            self.current = tf.keras.layers.Reshape(new_shape, **kwargs)(self.current)
+        self.current = tf.keras.layers.Reshape(new_shape, **kwargs)(self.current)
 
     def transpose(self, a=0, b=1, **kwargs):
         """
@@ -161,21 +161,22 @@ class ModelBuilder:
         shape[a] = tmp
         self.reshape(tuple(shape), **kwargs)
 
+    @_apply_strategy
     def flatten(self, **kwargs):
         """
         Add a flatten layer. Additional keyword arguments accepted.
         """
-        with self.strategy.scope():
-            self.current = tf.keras.layers.Flatten(**kwargs)(self.current)
+        self.current = tf.keras.layers.Flatten(**kwargs)(self.current)
 
+    @_apply_strategy
     def dropout(self, rate, **kwargs):
         """
         Add a dropout layer. Additional keyword arguments accepted.
         @param rate: rate to drop out inputs.
         """
-        with self.strategy.scope():
-            self.current = tf.keras.layers.Dropout(rate=rate, **kwargs)(self.current)
+        self.current = tf.keras.layers.Dropout(rate=rate, **kwargs)(self.current)
 
+    @_apply_strategy
     def dense(self, size: int, depth=1, activation='relu', **kwargs):
         """
         Procedurally add dense layers to the model.
@@ -184,11 +185,11 @@ class ModelBuilder:
         @param activation: activation function to use (relu by default).
         Additional keyword arguments are passed to TensorFlow Dense layer constructor.
         """
-        with self.strategy.scope():
-            for _ in range(depth):
-                self.current = tf.keras.layers.Dense(size, activation=activation,
-                                                     **kwargs)(self.current)
+        for _ in range(depth):
+            self.current = tf.keras.layers.Dense(size, activation=activation,
+                                                 **kwargs)(self.current)
 
+    @_apply_strategy
     def conv1D(self, filters: int, kernel_size: int, output_size: int, **kwargs):
         """
         Add a convolutional layer.
@@ -205,15 +206,15 @@ class ModelBuilder:
         if kernel_size >= self._shape()[0]:
             raise IncompatibleDimensionsException()
 
-        with self.strategy.scope():
-            self.current = tf.keras.layers.Conv1D(filters, kernel_size, activation='relu',
-                                                  **kwargs)(self.current)
-            self.current = tf.keras.layers.MaxPooling1D()(self.current)
-            # Removes extra dimension from shape
-            self.current = tf.keras.layers.Flatten()(self.current)
-            self.current = tf.keras.layers.BatchNormalization()(self.current)
+        self.current = tf.keras.layers.Conv1D(filters, kernel_size, activation='relu',
+                                              **kwargs)(self.current)
+        self.current = tf.keras.layers.MaxPooling1D()(self.current)
+        # Removes extra dimension from shape
+        self.current = tf.keras.layers.Flatten()(self.current)
+        self.current = tf.keras.layers.BatchNormalization()(self.current)
         self.dense(output_size, activation='relu')
 
+    @_apply_strategy
     def attention(self, num_heads: int, output_size: int, rate=.1):
         """
         Add an attention layer. Embeddings must be generated beforehand.
@@ -224,8 +225,7 @@ class ModelBuilder:
         if len(self._shape()) != 2:
             raise IncompatibleDimensionsException()
 
-        with self.strategy.scope():
-            self.current = AttentionBlock(self._shape()[1], num_heads, output_size,
-                                          rate=rate)(self.current)
-            self.current = tf.keras.layers.BatchNormalization()(self.current)
+        self.current = AttentionBlock(self._shape()[1], num_heads, output_size,
+                                      rate=rate)(self.current)
+        self.current = tf.keras.layers.BatchNormalization()(self.current)
 
