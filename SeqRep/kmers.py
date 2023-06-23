@@ -174,5 +174,5 @@ class Nucleotide_AA(KMerCounter):
         @param seqs: nucleotide sequences to convert.
         """
         kmers = self.kmer_sequences(seqs)
-        return [''.join(self.AA_LOOKUP[i]) for i in kmers]
+        return [''.join(self.AA_LOOKUP[i]) for i in tqdm(kmers)]
 
