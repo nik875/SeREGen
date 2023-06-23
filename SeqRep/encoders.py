@@ -50,6 +50,12 @@ class ModelBuilder:
             self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)
         self.current = self.inputs
 
+    def _apply_strategy(self, fn):
+        def in_strategy(*args, **kwargs):
+            with self.strategy.scope():
+                fn(*args, **kwargs)
+        return in_strategy
+
     @classmethod
     def text_input(cls, vocab: list[str], embed_dim=None, max_len=None, **kwargs):
         """
@@ -138,6 +144,7 @@ class ModelBuilder:
         with self.strategy.scope():
             self.current = tf.keras.layers.Reshape(new_shape, **kwargs)(self.current)
 
+    @_apply_strategy
     def transpose(self, a=0, b=1, **kwargs):
         """
         Transposes the input with a Reshape layer over the two given axes (flips them).
