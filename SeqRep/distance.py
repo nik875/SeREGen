@@ -72,7 +72,7 @@ class IncrementalDistance(Distance):
         return self.distance.transform(kmer_pair)
 
 
-class Alignment(Distance):
+class _Alignment(Distance):
     """
     Normalized alignment distance between two textual DNA sequences. Sequences must
     all have equal lengths.
@@ -93,4 +93,5 @@ class Alignment(Distance):
         """
         data = np.max(data) - data  # Convert similarity scores into distances
         return super().postprocessor(data)
+alignment = _Alignment()
 

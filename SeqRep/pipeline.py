@@ -19,7 +19,7 @@ from .kmers import KMerCounter, Nucleotide_AA
 from .compression import PCA, IPCA, AE, Compressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder
-from .distance import cosine, IncrementalDistance, Alignment
+from .distance import cosine, IncrementalDistance, alignment
 
 
 class Pipeline:
@@ -406,7 +406,7 @@ class HomologousSequencePipeline(Pipeline):
         builder.transpose()
         builder.dense(seq_len // compress_factor, depth=depth)
         builder.transpose()
-        model = ComparativeEncoder.from_model_builder(builder, dist=Alignment,
+        model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
                                                       output_dim=output_dim)
         return model
 
@@ -422,7 +422,7 @@ class HomologousSequencePipeline(Pipeline):
         builder.dense(seq_len // compress_factor)
         builder.transpose()
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, dist=Alignment,
+        model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
                                                       output_dim=output_dim)
         return model
 
@@ -439,7 +439,7 @@ class HomologousSequencePipeline(Pipeline):
         builder.transpose()
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
         builder.attention(attn_heads, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, dist=Alignment,
+        model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
                                                       output_dim=output_dim)
         return model
 
@@ -456,7 +456,7 @@ class HomologousSequencePipeline(Pipeline):
         builder.transpose()
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
         builder.attention(attn_heads, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, dist=Alignment,
+        model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
                                                       output_dim=output_dim)
         return model
 
