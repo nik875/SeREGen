@@ -72,17 +72,19 @@ class ModelBuilder:
         @return ModelBuilder: Newly created object.
         """
         obj = cls((1,), input_dtype=tf.string, **kwargs)
-        obj.current = tf.keras.layers.TextVectorization(output_sequence_length=max_len,
-                                                        output_mode='int',
-                                                        vocabulary=vocab,
-                                                        standardize=None,
-                                                        split='character')(obj.current)
+        with obj.strategy.scope():
+            obj.current = tf.keras.layers.TextVectorization(output_sequence_length=max_len,
+                                                            output_mode='int',
+                                                            vocabulary=vocab,
+                                                            standardize=None,
+                                                            split='character')(obj.current)
         if embed_dim:
             obj.embedding(len(vocab) + 2, embed_dim, input_length = max_len)
         else:
             obj.one_hot_encoding(len(vocab) + 2)
         return obj
 
+    @_apply_strategy
     def embedding(self, input_dim: int, output_dim: int, mask_zero=True, **kwargs):
         """
         Adds an Embedding layer to preprocess ordinally encoded input sequences.
@@ -95,6 +97,7 @@ class ModelBuilder:
                                                  mask_zero=mask_zero,
                                                  **kwargs)(self.current)
 
+    @_apply_strategy
     def one_hot_encoding(self, num_tokens: int, **kwargs):
         """
         Adds a CategoryEncoding layer configured to one-hot encode input sequences. Useful when
@@ -145,7 +148,6 @@ class ModelBuilder:
         with self.strategy.scope():
             self.current = tf.keras.layers.Reshape(new_shape, **kwargs)(self.current)
 
-    @_apply_strategy
     def transpose(self, a=0, b=1, **kwargs):
         """
         Transposes the input with a Reshape layer over the two given axes (flips them).
