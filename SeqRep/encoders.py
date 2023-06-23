@@ -54,7 +54,7 @@ class ModelBuilder:
     def _apply_strategy(fn):
         def in_strategy(self, *args, **kwargs):
             with self.strategy.scope():
-                fn(self, *args, **kwargs)
+                return fn(self, *args, **kwargs)
         return in_strategy
 
     @classmethod
