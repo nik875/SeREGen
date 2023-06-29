@@ -236,13 +236,13 @@ class Pipeline:
         if not self.quiet:
             print('Calculating distances between encodings...')
         x = np.fromiter((euclidean(x1[i], x2[i]) for i in (
-            range(len(x1)) if self.quiet else tqdm(range(len(x1))))), dtype=np.floating)
+            range(len(x1)) if self.quiet else tqdm(range(len(x1))))), dtype=np.float64)
         x = self.model.transform_distances(x, batch_size=distance_transform_batch_size)
         if not self.quiet:
             print('Calculating distances between model inputs...')
         with mp.Pool(jobs) as p:
             it = p.imap(self.model.distance.transform, zip(y1, y2), chunksize=chunksize)
-            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.floating)
+            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
         mse = mean_squared_error(y, x)
         r2 = r2_score(y, x)
         print(f'Mean squared error of distances: {mse}')
