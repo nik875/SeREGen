@@ -111,7 +111,7 @@ class ComparativeEncoder:
 
         with mp.Pool(jobs) as p:
             it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
-            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.floatc)
+            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.floating)
         y = self.distance.postprocessor(y)  # Vectorized transformations are applied here
 
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
@@ -164,7 +164,7 @@ class ComparativeEncoder:
 
         with mp.Pool(jobs) as p:
             it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
-            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.floatc)
+            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.floating)
         # Do not postprocess distances. The idea is that transform should provide a meaningful
         # distance, even if the postprocessed distances only have meaning in context of the current
         # dataset because of normalization.
@@ -174,7 +174,7 @@ class ComparativeEncoder:
         if not self.quiet:
             print('Calculating euclidean distances between encodings...')
         x = np.fromiter((euclidean(x1[i], x2[i]) for i in (range(len(y)) if self.quiet else
-                                                        tqdm(range(len(y))))), dtype=np.floatc)
+                                                        tqdm(range(len(y))))), dtype=np.floating)
         def fit():
             return self.decoder.fit(x, y, epochs=epoch_limit, batch_size=batch_size,
                                     validation_split=.1,
