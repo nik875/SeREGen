@@ -163,7 +163,7 @@ class ComparativeEncoder:
                 print(f'Epoch time: {time.time() - start}')
 
     def fit_decoder(self, data: np.ndarray, distance_on=None, batch_size=1000, epoch_limit=100,
-                    patience=2, jobs=1, chunksize=1, encodings=None, transform_batch_size=0):
+                    patience=1, jobs=1, chunksize=1, encodings=None, transform_batch_size=0):
         """
         Fit the distance decoder to the given sequence data.
         """

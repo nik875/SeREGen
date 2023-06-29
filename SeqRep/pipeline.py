@@ -469,7 +469,8 @@ class HomologousSequencePipeline(Pipeline):
         builder.transpose()
         builder.dense(seq_len // compress_factor)
         builder.transpose()
-        builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
+        builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor * 4)
+        builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
         model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
                                                       output_dim=output_dim)
@@ -486,7 +487,8 @@ class HomologousSequencePipeline(Pipeline):
         builder.transpose()
         builder.dense(seq_len // compress_factor)
         builder.transpose()
-        builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
+        builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor * 4)
+        builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
         model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
                                                       output_dim=output_dim)

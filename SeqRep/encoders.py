@@ -115,7 +115,7 @@ class ModelBuilder:
         """
         tf.keras.Model(inputs=self.inputs, outputs=self.current).summary()
 
-    def _shape(self) -> tuple:
+    def shape(self) -> tuple:
         """
         Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size
         """
@@ -155,7 +155,7 @@ class ModelBuilder:
         @param a: First axis to transpose, defaults to 0.
         @param b: Second axis to transpose, defaults to 1.
         """
-        shape = list(self._shape())
+        shape = list(self.shape())
         tmp = shape[b]
         shape[b] = shape[a]
         shape[a] = tmp
@@ -201,9 +201,9 @@ class ModelBuilder:
         @param activation: activation function.
         Additional keyword arguments are passed to TensorFlow Conv1D layer constructor.
         """
-        if len(self._shape()) != 2:
+        if len(self.shape()) != 2:
             raise IncompatibleDimensionsException()
-        if kernel_size >= self._shape()[0]:
+        if kernel_size >= self.shape()[0]:
             raise IncompatibleDimensionsException()
 
         self.current = tf.keras.layers.Conv1D(filters, kernel_size, activation='relu',
@@ -222,10 +222,10 @@ class ModelBuilder:
         @param output_size: Output size.
         @param rate: Learning rate for AttentionBlock.
         """
-        if len(self._shape()) != 2:
+        if len(self.shape()) != 2:
             raise IncompatibleDimensionsException()
 
-        self.current = AttentionBlock(self._shape()[1], num_heads, output_size,
+        self.current = AttentionBlock(self.shape()[1], num_heads, output_size,
                                       rate=rate)(self.current)
         self.current = tf.keras.layers.BatchNormalization()(self.current)
 
