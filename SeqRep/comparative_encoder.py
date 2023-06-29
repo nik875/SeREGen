@@ -80,10 +80,11 @@ class ComparativeEncoder:
             dec_input = tf.keras.layers.Input((1,))
             x = dec_input
             for _ in range(3):
-                x = tf.keras.layers.Dense(4, activation='relu')(x)
+                x = tf.keras.layers.Dense(100, activation='relu')(x)
             x = tf.keras.layers.Dense(1, activation='relu')(x)
             self.decoder = tf.keras.Model(inputs=dec_input, outputs=x)
-            self.decoder.compile(optimizer='adam', loss='mse')
+            self.decoder.compile(optimizer='adam',
+                                 loss=tf.keras.losses.MeanAbsolutePercentageError())
 
     @classmethod
     def from_model_builder(cls, obj, dist=None, quiet=False, **compile_params):

@@ -14,7 +14,7 @@ import tensorflow as tf
 import scipy.stats as st
 from scipy.spatial.distance import euclidean
 from sklearn.neighbors import BallTree
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_percentage_error
 
 from .dataset_builder import DatasetBuilder, SILVA_header_parser, COVID_header_parser
 from .visualize import repr_scatterplot
@@ -245,8 +245,10 @@ class Pipeline:
             y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
         mse = mean_squared_error(y, x)
         r2 = r2_score(y, x)
+        mape = mean_absolute_percentage_error(y, x)
         print(f'Mean squared error of distances: {mse}')
         print(f'R-squared correlation coefficient: {r2}')
+        print(f'Mean absolute percentage error: {mape}')
         return x, y
 
 
