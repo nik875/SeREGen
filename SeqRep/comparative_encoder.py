@@ -252,8 +252,8 @@ class ComparativeEncoder:
                 decoder = tf.keras.models.load_model(os.path.join(path, 'decoder'))
 
         if not os.path.exists(os.path.join(path, 'distance.pkl')):
-            print('Warning: distance save file missing! Inferencing is possible, but training and \
-                  decoder evaluation is not!')
+            print('Warning: distance save file missing! Inferencing is possible, but training and '
+                  'decoder evaluation is not!')
             dist = None
         else:
             with open(os.path.join(path, 'distance.pkl'), 'rb') as f:

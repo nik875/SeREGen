@@ -242,6 +242,7 @@ class Pipeline:
             print('Calculating distances between model inputs...')
         with mp.Pool(jobs) as p:
             it = p.imap(self.model.distance.transform, zip(y1, y2), chunksize=chunksize)
+            print(next(it))
             y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
         mse = mean_squared_error(y, x)
         r2 = r2_score(y, x)
