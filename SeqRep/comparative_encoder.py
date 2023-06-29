@@ -73,9 +73,9 @@ class ComparativeEncoder:
             self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
             self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
 
-            if decoder is not None:
-                self.decoder = decoder
-                return
+        if decoder is not None:
+            self.decoder = decoder
+            return
 
         dec_input = tf.keras.layers.Input((1,))
         x = dec_input
