@@ -156,13 +156,8 @@ class Pipeline:
             raise ValueError('kwargs.json file necessary!')
         kwargs.update(cls._load_special(savedir))
         obj = cls(**kwargs)
-        if 'distance.pkl' in contents:
-            with open(os.path.join(savedir, 'distance.pkl'), 'rb') as f:
-                dist = pickle.load(f)
-        else:
-            raise ValueError('distance.pkl file necessary!')
         if 'model' in contents:
-            obj.model = ComparativeEncoder.load(os.path.join(savedir, 'model'), dist=dist)
+            obj.model = ComparativeEncoder.load(os.path.join(savedir, 'model'))
         if 'preproc_reprs.npy' in contents:
             obj.preproc_reprs = np.load(os.path.join(savedir, 'preproc_reprs.npy'))
         if 'reprs.npy' in contents:

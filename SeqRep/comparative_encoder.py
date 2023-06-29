@@ -1,6 +1,8 @@
 """
 ComparativeEncoder module, trains a model comparatively using distances.
 """
+import os
+import pickle
 import time
 import multiprocessing as mp
 
@@ -45,7 +47,8 @@ class ComparativeEncoder:
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, encoder: tf.keras.Model, dist=None, strategy=None, quiet=False):
+    def __init__(self, encoder: tf.keras.Model, dist=None, strategy=None, quiet=False,
+                 decoder=None):
         """
         @param encoder: TensorFlow model that must support .train() and .__call__() at minimum.
         .predict() required for progress bar when transforming data.
@@ -69,6 +72,10 @@ class ComparativeEncoder:
             )
             self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
             self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
+
+            if decoder is not None:
+                self.decoder = decoder
+                return
 
             dec_input = tf.keras.layers.Input((1,))
             x = dec_input
@@ -151,11 +158,12 @@ class ComparativeEncoder:
                 print(f'Epoch time: {time.time() - start}')
 
     def fit_decoder(self, data: np.ndarray, distance_on=None, batch_size=1000, epoch_limit=100,
-                    patience=2, jobs=1, chunksize=1, transform_batch_size=0):
+                    patience=2, jobs=1, chunksize=1, encodings=None, transform_batch_size=0):
         """
         Fit the distance decoder to the given sequence data.
         """
         start = time.time()
+        distance_on = data if distance_on is None else distance_on
         rng = np.random.default_rng()
         p1 = rng.permutation(data.shape[0])
         y1 = distance_on[p1]
@@ -168,8 +176,8 @@ class ComparativeEncoder:
         # Do not postprocess distances. The idea is that transform should provide a meaningful
         # distance, even if the postprocessed distances only have meaning in context of the current
         # dataset because of normalization.
-        distance_on = distance_on if distance_on is not None else data
-        encodings = self.transform(data, batch_size=transform_batch_size)
+        if encodings is None:
+            encodings = self.transform(data, batch_size=transform_batch_size)
         x1, x2 = encodings[p1], encodings[p2]
         if not self.quiet:
             print('Calculating euclidean distances between encodings...')
@@ -215,20 +223,41 @@ class ComparativeEncoder:
         Save the encoder model to the given path.
         @param path: path to save to.
         """
-        self.encoder.save(path)
+        os.makedirs(path)
+        self.encoder.save(os.path.join(path, 'encoder'))
+        self.decoder.save(os.path.join(path, 'decoder'))
+        with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
+            pickle.dump(self.distance, f)
 
     @classmethod
-    def load(cls, path: str, dist=None):
+    def load(cls, path: str, strategy=None):
         """
         Load an encoder model and create a new ComparativeEncoder.
         @param path: path where model is saved.
         @param dist: distance metric to use for new ComparativeEncoder.
         @return: ComparativeEncoder object
         """
+        if not os.path.exists(os.path.join(path, 'encoder')):
+            raise ValueError('Encoder save file is necessary for loading a model!')
         custom_objects = {'correlation_coefficient_loss': correlation_coefficient_loss}
-        with tf.keras.utils.custom_object_scope(custom_objects):
-            embeddings = tf.keras.models.load_model(path)
-        return cls(embeddings, dist)
+        strategy = strategy or tf.distribute.get_strategy()
+        with strategy.scope():
+            with tf.keras.utils.custom_object_scope(custom_objects):
+                embeddings = tf.keras.models.load_model(os.path.join(path, 'encoder'))
+            if not os.path.exists(os.path.join(path, 'decoder')):
+                print('Warning: decoder save missing, will need to be retrained.')
+                decoder = None
+            else:
+                decoder = tf.keras.models.load_model(os.path.join(path, 'decoder'))
+
+        if not os.path.exists(os.path.join(path, 'distance.pkl')):
+            print('Warning: distance save file missing! Inferencing is possible, but training and \
+                  decoder evaluation is not!')
+            dist = None
+        else:
+            with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
+                dist = pickle.load(f)
+        return cls(embeddings, dist=dist, decoder=decoder, strategy=strategy)
 
     def summary(self):
         """
