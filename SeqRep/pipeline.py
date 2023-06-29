@@ -243,14 +243,14 @@ class Pipeline:
         with mp.Pool(jobs) as p:
             it = p.imap(self.model.distance.transform, zip(y1, y2), chunksize=chunksize)
             print(next(it))
-            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
-        mse = mean_squared_error(y, x)
-        r2 = r2_score(y, x)
-        mape = mean_absolute_percentage_error(y, x)
-        print(f'Mean squared error of distances: {mse}')
-        print(f'R-squared correlation coefficient: {r2}')
-        print(f'Mean absolute percentage error: {mape}')
-        return x, y
+        #    y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
+        #mse = mean_squared_error(y, x)
+        #r2 = r2_score(y, x)
+        #mape = mean_absolute_percentage_error(y, x)
+        #print(f'Mean squared error of distances: {mse}')
+        #print(f'R-squared correlation coefficient: {r2}')
+        #print(f'Mean absolute percentage error: {mape}')
+        #return x, y
 
 
 class KMerCountsPipeline(Pipeline):
