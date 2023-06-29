@@ -110,8 +110,8 @@ class ComparativeEncoder:
         y2 = distance_on[p2]
 
         with mp.Pool(jobs) as p:
-            y = np.array(list(tqdm(p.imap(self.distance.transform, zip(y1, y2),
-                                          chunksize=chunksize), total=y1.shape[0])))
+            it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
+            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.floatc)
         y = self.distance.postprocessor(y)  # Vectorized transformations are applied here
 
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
@@ -163,8 +163,8 @@ class ComparativeEncoder:
         y2 = distance_on[p2]
 
         with mp.Pool(jobs) as p:
-            y = np.array(list(tqdm(p.imap(self.distance.transform, zip(y1, y2),
-                                          chunksize=chunksize), total=y1.shape[0])))
+            it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
+            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.floatc)
         # Do not postprocess distances. The idea is that transform should provide a meaningful
         # distance, even if the postprocessed distances only have meaning in context of the current
         # dataset because of normalization.

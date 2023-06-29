@@ -5,13 +5,16 @@ import os
 import shutil
 import pickle
 import json
+import multiprocessing as mp
 
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 import scipy.stats as st
+from scipy.spatial.distance import euclidean
 from sklearn.neighbors import BallTree
+from sklearn.metrics import mean_squared_error, r2_score
 
 from .dataset_builder import DatasetBuilder, SILVA_header_parser, COVID_header_parser
 from .visualize import repr_scatterplot
@@ -209,7 +212,6 @@ class Pipeline:
         @return np.ndarray: Search results.
         """
         self._reprs_check()
-        self._fit_called_check()
         if self.index is None:  # If index hasn't been created, create it.
             if not self.quiet:
                 print('Creating search index...')
@@ -218,6 +220,39 @@ class Pipeline:
         dists, ind = self.index.query(query_enc, k=n_neighbors)
         matches = [self.dataset.iloc[i] for i in ind[0]]
         return self.model.transform_distances(dists[0]), matches
+
+    def evaluate(self, sample_size=None, jobs=1, chunksize=1, distance_transform_batch_size=0):
+        """
+        Evaluate the performance of the model by seeing how well we can predict true sequence
+        dissimilarity from encoding distances.
+        @param sample_size: Number of sequences to use for evaluation. All in dataset by default.
+        @return np.ndarray, np.ndarray: predicted distances, true distances
+        """
+        self._reprs_check()
+        sample_size = sample_size or len(self.dataset)
+        rng = np.random.default_rng()
+        sample = rng.permutation(len(self.dataset))[:sample_size]
+        encs = self.reprs[sample]
+        inputs = self.preproc_reprs[sample]
+        p1 = rng.permutation(len(encs))
+        p2 = rng.permutation(len(encs))
+        x1, x2 = encs[p1], encs[p2]
+        y1, y2 = inputs[p1], inputs[p2]
+        if not self.quiet:
+            print('Calculating distances between encodings...')
+        x = np.fromiter((euclidean(x1[i], x2[i]) for i in (range(len(x1)) if self.quiet else
+                                                           tqdm(range(len(x1))))), dtype=np.floatc)
+        x = self.model.transform_distances(x, batch_size=distance_transform_batch_size)
+        if not self.quiet:
+            print('Calculating distances between model inputs...')
+        with mp.Pool(jobs) as p:
+            it = p.imap(self.model.distance.transform, zip(y1, y2), chunksize=chunksize)
+            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.floatc)
+        mse = mean_squared_error(y, x)
+        r2 = r2_score(y, x)
+        print(f'Mean squared error of distances: {mse}')
+        print(f'R-squared correlation coefficient: {r2}')
+        return x, y
 
 
 class KMerCountsPipeline(Pipeline):
