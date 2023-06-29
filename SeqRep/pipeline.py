@@ -111,7 +111,7 @@ class Pipeline:
         Deletes any existing search tree.
         """
         self._fit_called_check()
-        self.reprs = self.transform_after_preproc(self.preproc_reprs)
+        self.reprs = self.transform_after_preproc(self.preproc_reprs, **kwargs)
         self.index = None  # Delete existing search tree because we assume reprs have changed.
         return self.reprs
 
