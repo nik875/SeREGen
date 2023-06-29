@@ -73,14 +73,18 @@ class ComparativeEncoder:
             self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
             self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
 
-        if decoder is not None:
-            self.decoder = decoder
-            return
+        self.decoder = decoder
+        if not self.decoder:
+            self.init_decoder()
 
+    def init_decoder(self, size=100, depth=3):
+        """
+        Initialize a decoder for this model.
+        """
         dec_input = tf.keras.layers.Input((1,))
         x = dec_input
-        for _ in range(3):
-            x = tf.keras.layers.Dense(100, activation='relu')(x)
+        for _ in range(depth):
+            x = tf.keras.layers.Dense(size, activation='relu')(x)
         x = tf.keras.layers.Dense(1, activation='relu')(x)
         self.decoder = tf.keras.Model(inputs=dec_input, outputs=x)
         self.decoder.compile(optimizer='adam',
