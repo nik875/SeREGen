@@ -89,7 +89,7 @@ class Pipeline:
             raise ValueError('Fit must be called before transform!')
 
     # Must be implemented by subclass.
-    def transform_after_preproc(self, data):
+    def transform_after_preproc(self, data, **kwargs):
         """
         Convert preprocessed sequence representations into final encodings.
         """
@@ -105,7 +105,7 @@ class Pipeline:
         self._fit_called_check()
         return self.transform_after_preproc(self.preprocess_seqs(seqs))
 
-    def transform_dataset(self) -> np.ndarray:
+    def transform_dataset(self, **kwargs) -> np.ndarray:
         """
         Transforms the loaded dataset into representations. Saves as self.reprs and returns result.
         Deletes any existing search tree.
