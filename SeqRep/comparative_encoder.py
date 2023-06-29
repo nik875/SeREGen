@@ -77,14 +77,14 @@ class ComparativeEncoder:
                 self.decoder = decoder
                 return
 
-            dec_input = tf.keras.layers.Input((1,))
-            x = dec_input
-            for _ in range(3):
-                x = tf.keras.layers.Dense(100, activation='relu')(x)
-            x = tf.keras.layers.Dense(1, activation='relu')(x)
-            self.decoder = tf.keras.Model(inputs=dec_input, outputs=x)
-            self.decoder.compile(optimizer='adam',
-                                 loss=tf.keras.losses.MeanAbsolutePercentageError())
+        dec_input = tf.keras.layers.Input((1,))
+        x = dec_input
+        for _ in range(3):
+            x = tf.keras.layers.Dense(100, activation='relu')(x)
+        x = tf.keras.layers.Dense(1, activation='relu')(x)
+        self.decoder = tf.keras.Model(inputs=dec_input, outputs=x)
+        self.decoder.compile(optimizer='adam',
+                             loss=tf.keras.losses.MeanAbsolutePercentageError())
 
     @classmethod
     def from_model_builder(cls, obj, dist=None, quiet=False, **compile_params):
@@ -171,6 +171,7 @@ class ComparativeEncoder:
         p2 = rng.permutation(data.shape[0])
         y2 = distance_on[p2]
 
+        print('Calculating distances between model inputs...')
         with mp.Pool(jobs) as p:
             it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
             y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
@@ -245,11 +246,11 @@ class ComparativeEncoder:
         with strategy.scope():
             with tf.keras.utils.custom_object_scope(custom_objects):
                 embeddings = tf.keras.models.load_model(os.path.join(path, 'encoder'))
-            if not os.path.exists(os.path.join(path, 'decoder')):
-                print('Warning: decoder save missing, will need to be retrained.')
-                decoder = None
-            else:
-                decoder = tf.keras.models.load_model(os.path.join(path, 'decoder'))
+        if not os.path.exists(os.path.join(path, 'decoder')):
+            print('Warning: decoder save missing, will need to be retrained.')
+            decoder = None
+        else:
+            decoder = tf.keras.models.load_model(os.path.join(path, 'decoder'))
 
         if not os.path.exists(os.path.join(path, 'distance.pkl')):
             print('Warning: distance save file missing! Inferencing is possible, but training and '
