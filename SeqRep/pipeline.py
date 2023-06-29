@@ -344,7 +344,7 @@ class KMerCountsPipeline(Pipeline):
             print('Training model...')
         self.model.fit(self.preproc_reprs, distance_on=distance_on, **model_fit_args)
         dec_fit_args = {k:v for k, v in model_fit_args if k in ['jobs', 'chunksize']}
-        self.model.fit_decoder(self.preproc_reprs, distance_on=distance_on, epoch_limit=1,
+        self.model.fit_decoder(self.preproc_reprs, distance_on=distance_on, epoch_limit=100,
                                **dec_fit_args)
 
     def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
@@ -517,7 +517,7 @@ class HomologousSequencePipeline(Pipeline):
             print('Training model...')
         self.model.fit(self.preproc_reprs, **kwargs)
         kwargs = {k:v for k, v in kwargs if k in ['jobs', 'chunksize']}
-        self.model.fit_decoder(self.preproc_reprs, epoch_limit=1, **kwargs)
+        self.model.fit_decoder(self.preproc_reprs, epoch_limit=100, **kwargs)
 
     def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
         """
