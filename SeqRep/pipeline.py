@@ -94,6 +94,16 @@ class Pipeline:
             print('Preprocessing dataset...')
         self.preproc_reprs = self.preprocess_seqs(self.dataset['seqs'].to_numpy(), **kwargs)
 
+    # Should be overridden to automatically select distance_on
+    def fit_decoder(self, distance_on: np.ndarray, **kwargs):
+        """
+        Fit the decoder based on the model's representations.
+        """
+        if not self.quiet:
+            print('Transforming dataset...')
+        self.transform_dataset()
+        self.decoder.fit(self.reprs, distance_on, **kwargs)
+
     def _fit_called_check(self):
         if self.preproc_reprs is None:
             raise ValueError('Fit must be called before transform!')
@@ -339,11 +349,7 @@ class KMerCountsPipeline(Pipeline):
         else:
             distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
         self.model.fit(self.preproc_reprs, distance_on=distance_on, batch_size=batch_size, **kwargs)
-        if not self.quiet:
-            print('Transforming dataset...')
-        self.transform_dataset()
-        kwargs = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
-        self.decoder.fit(self.reprs, distance_on, **kwargs)
+        self.fit_decoder(distance_on)
 
     def save(self, savedir: str):
         super().save(savedir)
@@ -509,11 +515,7 @@ class HomologousSequencePipeline(Pipeline):
             self.create_model()
         super().fit()
         self.model.fit(self.preproc_reprs, batch_size=batch_size, **kwargs)
-        if not self.quiet:
-            print('Transforming dataset...')
-        self.transform_dataset(batch_size=batch_size)
-        kwargs = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
-        self.decoder.fit(self.reprs, self.preproc_reprs, **kwargs)
+        self.fit_decoder(self.preproc_reprs)
 
     def save(self, savedir: str):
         super().save(savedir)

@@ -16,12 +16,14 @@ from . import distance
 from .encoders import ModelBuilder
 
 
-class Model:
+class ComparativeModel:
     """
-    Generic model class. Stores some useful common functions.
+    Abstract ComparativeModel class. Stores some useful common functions.
     """
-    def __init__(self, model: tf.keras.Model, quiet=False, properties=None):
+    def __init__(self, model: tf.keras.Model, dist: distance.Distance, quiet=False,
+                 properties=None):
         self.model = model
+        self.distance = dist
         self.quiet = quiet
         self.properties = {} if properties is None else properties
 
@@ -32,7 +34,7 @@ class Model:
         return strategy or tf.distribute.get_strategy()
 
     @staticmethod
-    def _run_tf_fn(init_message=None):
+    def _run_tf_fn(init_message=None, print_time=False):
         def fit_dec(fn):
             def fit_output_mgmt(self, *args, **kwargs):
                 start_time = time.time()
@@ -43,14 +45,46 @@ class Model:
                 result = fn(self, *args, **kwargs)
                 if self.quiet:
                     tf.keras.utils.enable_interactive_logging()
-                else:
+                elif print_time:
                     print(f'Total time taken: {time.time() - start_time} seconds.')
                 return result
             return fit_output_mgmt
         return fit_dec
 
+    # Subclass must override
+    def train_step(self) -> dict:
+        """
+        Single epoch of training.
+        """
+        return {}
 
-class ComparativeEncoder(Model):
+    @ComparativeModel._run_tf_fn(print_time=True)
+    def fit(self, *args, epochs=100, min_delta=0, patience=1, **kwargs):
+        """
+        Train the model based on the given parameters. Extra arguments are passed to train_step.
+        @param epochs: epochs to train for.
+        @param min_delta: Minimum change required to qualify as an improvement.
+        @param patience: How many epochs with no improvement before giving up.
+        """
+        history = {}
+        for i in range(epochs):
+            start = time.time()
+            if not self.quiet:
+                print(f'Epoch {i + 1}:')
+            this_history = self.train_step(*args, **kwargs)
+            if not self.quiet:
+                print(f'Epoch time: {time.time() - start}')
+            history = {k: v + this_history[k] for k, v in history} if history else this_history
+            if not patience:  # Disable early stopping by setting to None or 0
+                continue
+            past_losses = history['loss'][-patience - 1:]
+            if past_losses[-1] - past_losses[0] > min_delta:
+                print('Stopping early due to lack of improvement!')
+                break
+        return history
+
+
+class ComparativeEncoder(ComparativeModel):
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
@@ -117,15 +151,18 @@ class ComparativeEncoder(Model):
         r = K.maximum(K.minimum(r, 1.0), -1.0)
         return 1 - r
 
-    def _randomized_epoch(self, data: np.ndarray, distance_on: np.ndarray, jobs: int,
-                          chunksize: int, batch_size: int):
+    # pylint: disable=arguments-differ
+    def train_step(self, data: np.ndarray, distance_on: np.ndarray, batch_size=100, jobs=1,
+                   chunksize=1):
         """
         Train a single randomized epoch on data and distance_on.
         @param data: data to train model on.
-        @param distance_on: data to use for distance computations.
+        @param distance_on: np.ndarray of data to use for distance computations. Allows for distance
+        to be based on secondary properties of each sequence, or on a string representation of the
+        sequence (e.g. for alignment comparison methods).
+        @param batch_size: batch size for TensorFlow.
         @param jobs: number of CPU jobs to use.
         @param chunksize: chunksize for Python multiprocessing.
-        @param batch_size: batch size for TensorFlow.
         """
         rng = np.random.default_rng()
         p1 = rng.permutation(data.shape[0])
@@ -150,41 +187,11 @@ class ComparativeEncoder(Model):
 
         return self.model.fit(train_data, epochs=1).history
 
-    @Model._run_tf_fn('Training ComparativeEncoder...')
-    def fit(self, data: np.ndarray, distance_on=None, batch_size=100, epochs=10, jobs=1,
-            chunksize=1, min_delta=0, patience=0):
-        """
-        Fit the ComparativeEncoder to the given data.
-        @param data: np.ndarray to train on.
-        @param distance_on: np.ndarray of data to use for distance computations. Allows for distance
-        to be based on secondary properties of each sequence, or on a string representation of the
-        sequence (e.g. for alignment comparison methods).
-        @param batch_size: batch size for TensorFlow.
-        @param epochs: epochs to train for.
-        @param jobs: number of CPU jobs to use for distance calculations (not GPU optimized).
-        @param chunksize: chunksize for Python multiprocessing.
-        @param min_delta: Minimum change required to qualify as an improvement.
-        @param patience: How many epochs with no improvement before giving up.
-        """
-        distance_on = distance_on if distance_on is not None else data
-        history = {}
-        for i in range(epochs):
-            start = time.time()
-            if not self.quiet:
-                print(f'Epoch {i + 1}:')
-            this_history = self._randomized_epoch(data, distance_on, jobs, chunksize, batch_size)
-            if not self.quiet:
-                print(f'Epoch time: {time.time() - start}')
-            history = {k: v + this_history[k] for k, v in history} if history else this_history
-            if not patience:  # Disable early stopping by setting to None or 0
-                continue
-            past_losses = history['loss'][-patience - 1:]
-            if past_losses[-1] - past_losses[0] > min_delta:
-                print('Stopping early due to lack of improvement!')
-                break
-        return history
+    def fit(self, *args, distance_on=None, **kwargs):
+        distance_on = distance_on if distance_on is not None else args[0]
+        super().fit(*args, distance_on, **kwargs)
 
-    @Model._run_tf_fn()
+    @ComparativeModel._run_tf_fn()
     def transform(self, data: np.ndarray, batch_size: int) -> np.ndarray:
         """
         Transform the given data into representations using trained model.
@@ -237,7 +244,7 @@ class ComparativeEncoder(Model):
         self.encoder.summary()
 
 
-class DistanceDecoder(Model):
+class DistanceDecoder(ComparativeModel):
     """
     Decoder model to convert generated distances into true distances.
     """
@@ -265,19 +272,17 @@ class DistanceDecoder(Model):
                                 loss=tf.keras.losses.MeanAbsolutePercentageError())
         return decoder
 
-    @Model._run_tf_fn('Training DistanceDecoder...')
-    def fit(self, encodings: np.ndarray, distance_on: np.ndarray, batch_size=1000, epoch_limit=100,
-            patience=1, jobs=1, chunksize=1):
-        """
-        Fit the decoder to the given data.
-        """
+    # pylint: disable=arguments-differ
+    def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, batch_size=1000, jobs=1,
+                   chunksize=1):
         rng = np.random.default_rng()
         p1 = rng.permutation(distance_on.shape[0])
         y1 = distance_on[p1]
         p2 = rng.permutation(distance_on.shape[0])
         y2 = distance_on[p2]
 
-        print('Calculating distances between model inputs...')
+        if not self.quiet:
+            print('Calculating distances between model inputs...')
         with mp.Pool(jobs) as p:
             it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
             y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
@@ -290,13 +295,17 @@ class DistanceDecoder(Model):
         x = np.fromiter((euclidean(x1[i], x2[i]) for i in (range(len(y)) if self.quiet else
                                                         tqdm(range(len(y))))), dtype=np.float64)
 
-        print('Training model...')
-        return self.model.fit(x, y, epochs=epoch_limit, batch_size=batch_size,
-                              validation_split=.1,
-                              callbacks=[tf.keras.callbacks.EarlyStopping(
-                                  monitor='val_loss', patience=patience)])
+        train_data = tf.data.Dataset.from_tensor_slices((x, y))
+        train_data = train_data.batch(batch_size)
 
-    @Model._run_tf_fn()
+        options = tf.data.Options()
+        options.experimental_distribute.auto_shard_policy = \
+            tf.data.experimental.AutoShardPolicy.DATA
+        train_data = train_data.with_options(options)
+
+        return self.model.fit(train_data, epochs=1).history
+
+    @ComparativeModel._run_tf_fn()
     def transform(self, data: np.ndarray, batch_size=256) -> np.ndarray:
         """
         Transform the given distances between this model's encodings into predicted true distances.
