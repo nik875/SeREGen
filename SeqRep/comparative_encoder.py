@@ -35,7 +35,7 @@ class Model:
                     tf.keras.utils.disable_interactive_logging()
                 elif init_message:
                     print(init_message)
-                result = fn(*args, **kwargs)
+                result = fn(self, *args, **kwargs)
                 if self.quiet:
                     tf.keras.utils.enable_interactive_logging()
                 else:
