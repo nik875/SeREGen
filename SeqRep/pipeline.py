@@ -149,6 +149,17 @@ class Pipeline:
         """
         return {}
 
+    def sample_data(self, size: int):
+        """
+        Randomly samples the Dataset and all representations down to size. Irreversible.
+        """
+        sample = np.permutation(size)[:size]
+        self.dataset = self.dataset.iloc[sample]
+        if self.preproc_reprs is not None:
+            self.preproc_reprs = self.preproc_reprs[sample]
+        if self.reprs is not None:
+            self.reprs = self.reprs[sample]
+
     def _reprs_check(self):
         """
         Wraps logic to check that reprs exist.
