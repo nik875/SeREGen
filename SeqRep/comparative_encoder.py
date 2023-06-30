@@ -292,8 +292,7 @@ class DistanceDecoder(ComparativeModel):
         # distance, even if the postprocessed distances only have meaning in context of the current
         # dataset because of normalization.
         x1, x2 = encodings[p1], encodings[p2]
-        x = np.fromiter((euclidean(x1[i], x2[i]) for i in (range(len(y)) if self.quiet else
-                                                        tqdm(range(len(y))))), dtype=np.float64)
+        x = np.fromiter((euclidean(x1[i], x2[i]) for i in range(len(y))), dtype=np.float64)
 
         train_data = tf.data.Dataset.from_tensor_slices((x, y))
         train_data = train_data.batch(batch_size)
