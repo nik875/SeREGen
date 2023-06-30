@@ -45,6 +45,7 @@ class ModelBuilder:
         @param distribute_strategy: strategy to use for distributed training. Defaults to training
         on a single GPU.
         """
+        tf.keras.backend.clear_session()
         self.strategy = distribute_strategy or tf.distribute.get_strategy()
         with self.strategy.scope():
             self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)

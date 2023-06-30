@@ -206,6 +206,7 @@ class ComparativeEncoder(Model):
         """
         if not os.path.exists(os.path.join(path, 'encoder')):
             raise ValueError('Encoder save file is necessary for loading a model!')
+        tf.keras.backend.clear_session()
         custom_objects = {'correlation_coefficient_loss': cls.correlation_coefficient_loss}
         strategy = strategy or tf.distribute.get_strategy()
         with strategy.scope():
@@ -232,8 +233,7 @@ class DistanceDecoder(Model):
     """
     Decoder model to convert generated distances into true distances.
     """
-    def __init__(self, model=None, graph=None, dist=None, **kwargs):
-        self.graph = graph
+    def __init__(self, model=None, dist=None, **kwargs):
         super().__init__(model or self.default_decoder(), **kwargs)
         self.distance = dist or distance.Distance()
 
@@ -241,18 +241,17 @@ class DistanceDecoder(Model):
         """
         Create a simple decoder.
         """
+        tf.keras.backend.clear_session()
         strategy = self.strategy if hasattr(self, 'strategy') else tf.distribute.get_strategy()
-        with tf.Graph().as_default() as graph:
-            self.graph = graph
-            with strategy.scope():
-                dec_input = tf.keras.layers.Input((1,))
-                x = dec_input
-                for _ in range(depth):
-                    x = tf.keras.layers.Dense(size, activation='relu')(x)
-                x = tf.keras.layers.Dense(1, activation='relu')(x)
-                decoder = tf.keras.Model(inputs=dec_input, outputs=x)
-                decoder.compile(optimizer='adam',
-                                loss=tf.keras.losses.MeanAbsolutePercentageError())
+        with strategy.scope():
+            dec_input = tf.keras.layers.Input((1,))
+            x = dec_input
+            for _ in range(depth):
+                x = tf.keras.layers.Dense(size, activation='relu')(x)
+            x = tf.keras.layers.Dense(1, activation='relu')(x)
+            decoder = tf.keras.Model(inputs=dec_input, outputs=x)
+            decoder.compile(optimizer='adam',
+                            loss=tf.keras.losses.MeanAbsolutePercentageError())
         return decoder
 
     @Model._run_tf_fn('Training DistanceDecoder...')
@@ -281,19 +280,17 @@ class DistanceDecoder(Model):
                                                         tqdm(range(len(y))))), dtype=np.float64)
 
         print('Training model...')
-        with tf.Session(graph=self.graph):
-            return self.model.fit(x, y, epochs=epoch_limit, batch_size=batch_size,
-                                  validation_split=.1,
-                                  callbacks=[tf.keras.callbacks.EarlyStopping(
-                                      monitor='val_loss', patience=patience)])
+        return self.model.fit(x, y, epochs=epoch_limit, batch_size=batch_size,
+                              validation_split=.1,
+                              callbacks=[tf.keras.callbacks.EarlyStopping(
+                                  monitor='val_loss', patience=patience)])
 
     @Model._run_tf_fn()
     def transform(self, data: np.ndarray, batch_size=256) -> np.ndarray:
         """
         Transform the given distances between this model's encodings into predicted true distances.
         """
-        with tf.Session(graph=self.graph):
-            return self.model.predict(data, batch_size=batch_size)
+        return self.model.predict(data, batch_size=batch_size)
 
     def save(self, path: str):
         """
@@ -316,9 +313,9 @@ class DistanceDecoder(Model):
         if not os.path.exists(os.path.join(path, 'decoder')):
             raise ValueError('Decoder save file is necessary for loading a model!')
         strategy = strategy or tf.distribute.get_strategy()
-        with tf.Graph.as_default() as graph:
-            with strategy.scope():
-                model = tf.keras.models.load_model(os.path.join(path, 'decoder'))
+        tf.keras.backend.clear_session()
+        with strategy.scope():
+            model = tf.keras.models.load_model(os.path.join(path, 'decoder'))
 
         if not os.path.exists(os.path.join(path, 'distance.pkl')):
             print('Warning: distance save file missing! Inferencing is possible, but training and '
@@ -327,7 +324,7 @@ class DistanceDecoder(Model):
         else:
             with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
                 dist = pickle.load(f)
-        return cls(model=model, graph=graph, dist=dist, strategy=strategy, **kwargs)
+        return cls(model=model, dist=dist, strategy=strategy, **kwargs)
 
     def summary(self):
         """
