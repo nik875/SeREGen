@@ -305,7 +305,7 @@ class DistanceDecoder(ComparativeModel):
         dataset = tf.data.Dataset.from_tensor_slices(data)
         options = tf.data.Options()
         options.experimental_distribute.auto_shard_policy = \
-            tf.data.experimental.AutoShardPolicy.DATA
+            tf.data.experimental.AutoShardPolicy.OFF
         dataset = dataset.with_options(options)
         return self.model.predict(dataset, batch_size=batch_size)
 
