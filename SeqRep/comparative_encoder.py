@@ -72,7 +72,7 @@ class ComparativeEncoder(Model):
         self.distance = dist or distance.Distance()
         self.strategy = self.select_strategy(strategy)
 
-        with tf.variable_scope(v_scope):
+        with tf.name_scope(v_scope):
             with self.strategy.scope():
                 inputa = tf.keras.layers.Input(properties['input_shape'], name='input_a',
                                                dtype=properties['input_dtype'])
@@ -216,7 +216,7 @@ class ComparativeEncoder(Model):
             raise ValueError('Encoder save file is necessary for loading a model!')
         custom_objects = {'correlation_coefficient_loss': cls.correlation_coefficient_loss}
         strategy = strategy or tf.distribute.get_strategy()
-        with tf.variable_scope(v_scope_name):
+        with tf.name_scope(v_scope_name):
             with strategy.scope():
                 with tf.keras.utils.custom_object_scope(custom_objects):
                     encoder = tf.keras.models.load_model(os.path.join(path, 'encoder'))
@@ -252,7 +252,7 @@ class DistanceDecoder(Model):
         """
         Create a simple decoder.
         """
-        with tf.variable_scope(self.v_scope):
+        with tf.name_scope(self.v_scope):
             with self.strategy.scope():
                 dec_input = tf.keras.layers.Input((1,))
                 x = tf.keras.layers.Dense(size, activation='relu')(dec_input)
@@ -324,7 +324,7 @@ class DistanceDecoder(Model):
         if not os.path.exists(os.path.join(path, 'decoder')):
             raise ValueError('Decoder save file is necessary for loading a model!')
         strategy = strategy or tf.distribute.get_strategy()
-        with tf.variable_scope(v_scope):
+        with tf.name_scope(v_scope):
             with strategy.scope():
                 model = tf.keras.models.load_model(os.path.join(path, 'decoder'))
 

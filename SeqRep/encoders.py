@@ -48,20 +48,22 @@ class ModelBuilder:
         """
         self.strategy = distribute_strategy or tf.distribute.get_strategy()
         self.v_scope = v_scope
-        with self.strategy.scope():
-            self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)
+        with tf.name_scope(v_scope):
+            with self.strategy.scope():
+                self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)
         self.current = self.inputs
 
     # pylint: disable=no-self-argument,not-callable
     def _apply_scopes(fn):
         def in_scopes(self, *args, **kwargs):
-            with tf.variable_scope(self.v_scope):
+            with tf.name_scope(self.v_scope):
                 with self.strategy.scope():
                     return fn(self, *args, **kwargs)
         return in_scopes
 
     @classmethod
-    def text_input(cls, vocab: list[str], embed_dim=None, max_len=None, **kwargs):
+    def text_input(cls, vocab: list[str], embed_dim=None, max_len=None, v_scope='encoder',
+                   **kwargs):
         """
         Factory function that returns a new ModelBuilder object which can receive text input. Adds a
         TextVectorization and an Embedding layer to preprocess string input data. Split happens
@@ -74,18 +76,24 @@ class ModelBuilder:
         @param max_len: Length to trim and pad input sequences to.
         @return ModelBuilder: Newly created object.
         """
-        obj = cls((1,), input_dtype=tf.string, **kwargs)
-        with obj.strategy.scope():
-            obj.current = tf.keras.layers.TextVectorization(output_sequence_length=max_len,
-                                                            output_mode='int',
-                                                            vocabulary=vocab,
-                                                            standardize=None,
-                                                            split='character')(obj.current)
+        obj = cls((1,), input_dtype=tf.string, v_scope=v_scope, **kwargs)
+        obj.text_vectorization(output_sequence_length=max_len,
+                               output_mode='int',
+                               vocabulary=vocab,
+                               standardize=None,
+                               split='character')
         if embed_dim:
             obj.embedding(len(vocab) + 2, embed_dim, input_length = max_len)
         else:
             obj.one_hot_encoding(len(vocab) + 2)
         return obj
+
+    @_apply_scopes
+    def text_vectorization(self, *args, **kwargs):
+        """
+        Passes arguments directly to TextVectorization layer.
+        """
+        self.current = tf.keras.layers.TextVectorization(*args, **kwargs)(self.current)
 
     @_apply_scopes
     def embedding(self, input_dim: int, output_dim: int, mask_zero=True, **kwargs):
