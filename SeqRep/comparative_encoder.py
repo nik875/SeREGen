@@ -85,7 +85,8 @@ class ComparativeModel:
             this_history = self.train_step(*args, **kwargs)
             if not self.quiet:
                 print(f'Epoch time: {time.time() - start}')
-            history = {k: v + this_history[k] for k, v in history} if history else this_history
+            history = {k: v + this_history[k] for k, v in history.items()} if history else \
+                this_history
             if not early_stop:
                 continue
             past_losses = history['loss'][-patience - 1:]
