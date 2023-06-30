@@ -240,7 +240,8 @@ class DistanceDecoder(Model):
         """
         Create a simple decoder.
         """
-        with self.strategy.scope():
+        strategy = self.strategy if hasattr(self, 'strategy') else tf.distribute.get_strategy()
+        with strategy.scope():
             dec_input = tf.keras.layers.Input((1,))
             x = dec_input
             for _ in range(depth):
