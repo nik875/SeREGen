@@ -16,6 +16,24 @@ from .distance import Distance
 from .encoders import ModelBuilder
 
 
+def _run_tf_fn(init_message=None, print_time=False):
+    def fit_dec(fn):
+        def fit_output_mgmt(self, *args, **kwargs):
+            start_time = time.time()
+            if self.quiet:
+                tf.keras.utils.disable_interactive_logging()
+            elif init_message:
+                print(init_message)
+            result = fn(self, *args, **kwargs)
+            if self.quiet:
+                tf.keras.utils.enable_interactive_logging()
+            elif print_time:
+                print(f'Total time taken: {time.time() - start_time} seconds.')
+            return result
+        return fit_output_mgmt
+    return fit_dec
+
+
 class ComparativeModel:
     """
     Abstract ComparativeModel class. Stores some useful common functions.
@@ -41,24 +59,6 @@ class ComparativeModel:
         Select either the given strategy or the default strategy.
         """
         return strategy or tf.distribute.get_strategy()
-
-    @staticmethod
-    def _run_tf_fn(init_message=None, print_time=False):
-        def fit_dec(fn):
-            def fit_output_mgmt(self, *args, **kwargs):
-                start_time = time.time()
-                if self.quiet:
-                    tf.keras.utils.disable_interactive_logging()
-                elif init_message:
-                    print(init_message)
-                result = fn(self, *args, **kwargs)
-                if self.quiet:
-                    tf.keras.utils.enable_interactive_logging()
-                elif print_time:
-                    print(f'Total time taken: {time.time() - start_time} seconds.')
-                return result
-            return fit_output_mgmt
-        return fit_dec
 
     # Subclass must override
     def train_step(self) -> dict:
@@ -197,7 +197,7 @@ class ComparativeEncoder(ComparativeModel):
         distance_on = distance_on if distance_on is not None else args[0]
         super().fit(*args, distance_on, patience=patience, **kwargs)
 
-    @ComparativeModel._run_tf_fn()
+    @_run_tf_fn()
     def transform(self, data: np.ndarray, batch_size: int) -> np.ndarray:
         """
         Transform the given data into representations using trained model.
@@ -297,7 +297,7 @@ class DistanceDecoder(ComparativeModel):
 
         return self.model.fit(train_data, epochs=1).history
 
-    @ComparativeModel._run_tf_fn()
+    @_run_tf_fn()
     def transform(self, data: np.ndarray, batch_size=256) -> np.ndarray:
         """
         Transform the given distances between this model's encodings into predicted true distances.
