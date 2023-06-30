@@ -242,7 +242,7 @@ class DistanceDecoder(Model):
         Create a simple decoder.
         """
         strategy = self.strategy if hasattr(self, 'strategy') else tf.distribute.get_strategy()
-        with tf.Graph.as_default() as graph:
+        with tf.Graph().as_default() as graph:
             self.graph = graph
             with strategy.scope():
                 dec_input = tf.keras.layers.Input((1,))
