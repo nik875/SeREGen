@@ -51,6 +51,18 @@ class Pipeline:
         if trim_to:
             self.dataset.trim_seqs(trim_to)
 
+    def sample_data(self, size: int):
+        """
+        Randomly samples the Dataset and all representations down to size. Irreversible.
+        """
+        rng = np.random.default_rng()
+        sample = rng.permutation(size)[:size]
+        self.dataset = self.dataset.iloc[sample]
+        if self.preproc_reprs is not None:
+            self.preproc_reprs = self.preproc_reprs[sample]
+        if self.reprs is not None:
+            self.reprs = self.reprs[sample]
+
     # Should be implemented by subclass unless strings are passed directly as input
     # pylint: disable=unused-argument
     def preprocess_seq(self, seq):
@@ -148,17 +160,6 @@ class Pipeline:
         Returns a dictionary of all loaded special constructor arguments for this Pipeline.
         """
         return {}
-
-    def sample_data(self, size: int):
-        """
-        Randomly samples the Dataset and all representations down to size. Irreversible.
-        """
-        sample = np.permutation(size)[:size]
-        self.dataset = self.dataset.iloc[sample]
-        if self.preproc_reprs is not None:
-            self.preproc_reprs = self.preproc_reprs[sample]
-        if self.reprs is not None:
-            self.reprs = self.reprs[sample]
 
     def _reprs_check(self):
         """
