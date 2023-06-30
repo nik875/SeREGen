@@ -142,9 +142,9 @@ class Pipeline:
         return {}
 
     @classmethod
-    def load(cls, savedir: str):
+    def load(cls, savedir: str, **kwargs):
         """
-        Load a Pipeline from the savedir.
+        Load a Pipeline from the savedir. Keyword arguments passed to ComparativeEncoder load.
         """
         if not os.path.exists(savedir):
             raise ValueError("Directory doesn't exist!")
@@ -157,7 +157,7 @@ class Pipeline:
         kwargs.update(cls._load_special(savedir))
         obj = cls(**kwargs)
         if 'model' in contents:
-            obj.model = ComparativeEncoder.load(os.path.join(savedir, 'model'))
+            obj.model = ComparativeEncoder.load(os.path.join(savedir, 'model'), **kwargs)
         if 'preproc_reprs.npy' in contents:
             obj.preproc_reprs = np.load(os.path.join(savedir, 'preproc_reprs.npy'))
         if 'reprs.npy' in contents:
@@ -364,6 +364,10 @@ class KMerCountsPipeline(Pipeline):
         if self.compressor is not None:
             self.compressor.save(os.path.join(savedir, 'compressor'))
 
+    @classmethod
+    def load(cls, *args, **kwargs):
+        return super().load(*args, strategy=tf.distribute.MirroredStrategy(), **kwargs)
+
     @staticmethod
     def _load_special(savedir: str):
         result = {}
@@ -539,6 +543,10 @@ class HomologousSequencePipeline(Pipeline):
         super().save(savedir)
         with open(os.path.join(savedir, 'converter.pkl'), 'wb') as f:
             pickle.dump(self.converter, f)
+
+    @classmethod
+    def load(cls, *args, **kwargs):
+        return super().load(*args, strategy=tf.distribute.MirroredStrategy(), **kwargs)
 
     @staticmethod
     def _load_special(savedir: str):
