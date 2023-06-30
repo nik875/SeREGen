@@ -67,7 +67,7 @@ class ComparativeModel:
         """
         return {}
 
-    @ComparativeModel._run_tf_fn(print_time=True)
+    @_run_tf_fn(print_time=True)
     def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=1, **kwargs):
         """
         Train the model based on the given parameters. Extra arguments are passed to train_step.
