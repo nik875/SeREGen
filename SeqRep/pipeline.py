@@ -133,10 +133,12 @@ class Pipeline:
         if 'model' in contents:
             model = ComparativeEncoder.load(os.path.join(savedir, 'model'), strategy=strategy,
                                             quiet=quiet)
-        if 'preproc_reprs.npy' in contents:
-            preproc_reprs = np.load(os.path.join(savedir, 'preproc_reprs.npy'))
-        if 'reprs.npy' in contents:
-            reprs = np.load(os.path.join(savedir, 'reprs.npy'))
+        else:
+            print('Warning: model missing!')
+            model = None
+        preproc_reprs = np.load(os.path.join(savedir, 'preproc_reprs.npy')) if 'preproc_reprs.npy' \
+            in contents else None
+        reprs = np.load(os.path.join(savedir, 'reprs.npy')) if 'reprs.npy' in contents else None
         return cls(model=model, preproc_reprs=preproc_reprs, reprs=reprs, quiet=quiet, **kwargs)
 
     @staticmethod
