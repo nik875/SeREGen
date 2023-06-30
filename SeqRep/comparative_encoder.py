@@ -203,11 +203,11 @@ class ComparativeEncoder(ComparativeModel):
         """
         Transform the given data into representations using trained model.
         @param data: np.ndarray containing all sequences to transform.
-        @param batch_size: Batch size for .predict(), required for progress bar. Slows execution.
+        @param batch_size: Batch size for .predict().
         @return np.ndarray: Representations for all sequences in data.
         """
         dataset = tf.data.Dataset.from_tensor_slices(data)
-        dataset = dataset.batch(dataset)
+        dataset = dataset.batch(batch_size)
 
         options = tf.data.Options()
         options.experimental_distribute.auto_shard_policy = \
