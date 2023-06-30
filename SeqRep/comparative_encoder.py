@@ -90,7 +90,7 @@ class ComparativeModel:
             if not early_stop:
                 continue
             past_losses = self.history['loss'][-patience - 1:]
-            if past_losses[-1] - past_losses[0] < -min_delta:
+            if past_losses[-1] - past_losses[0] > -min_delta:
                 print('Stopping early due to lack of improvement!')
                 break
         return self.history
