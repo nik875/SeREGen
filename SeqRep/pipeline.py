@@ -516,6 +516,7 @@ class HomologousSequencePipeline(Pipeline):
             self.create_model()
         super().fit()
         self.model.fit(self.preproc_reprs, batch_size=batch_size, **kwargs)
+        kwargs = {k:v for k,v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.fit_decoder(self.preproc_reprs, batch_size)
 
     def save(self, savedir: str):
