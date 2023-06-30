@@ -102,7 +102,7 @@ class Pipeline:
         if not self.quiet:
             print('Transforming dataset...')
         self.transform_dataset()
-        self.decoder.fit(self.reprs, distance_on, **kwargs)
+        self.decoder.fit(self.reprs, distance_on, epochs=10, **kwargs)
 
     def _fit_called_check(self):
         if self.preproc_reprs is None:

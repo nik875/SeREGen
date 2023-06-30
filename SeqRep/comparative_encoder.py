@@ -68,13 +68,15 @@ class ComparativeModel:
         return {}
 
     @ComparativeModel._run_tf_fn(print_time=True)
-    def fit(self, *args, epochs=100, min_delta=0, patience=1, **kwargs):
+    def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=1, **kwargs):
         """
         Train the model based on the given parameters. Extra arguments are passed to train_step.
         @param epochs: epochs to train for.
         @param min_delta: Minimum change required to qualify as an improvement.
         @param patience: How many epochs with no improvement before giving up.
         """
+        if patience < 1:
+            raise ValueError('Patience value must be >1.')
         history = {}
         for i in range(epochs):
             start = time.time()
@@ -84,10 +86,10 @@ class ComparativeModel:
             if not self.quiet:
                 print(f'Epoch time: {time.time() - start}')
             history = {k: v + this_history[k] for k, v in history} if history else this_history
-            if not patience:  # Disable early stopping by setting to None or 0
+            if not early_stop:
                 continue
             past_losses = history['loss'][-patience - 1:]
-            if past_losses[-1] - past_losses[0] > min_delta:
+            if past_losses[-1] - past_losses[0] < -min_delta:
                 print('Stopping early due to lack of improvement!')
                 break
         return history
