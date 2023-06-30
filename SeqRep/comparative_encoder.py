@@ -233,10 +233,12 @@ class DistanceDecoder(Model):
     Decoder model to convert generated distances into true distances.
     """
     def __init__(self, model=None, dist=None, strategy=None, **kwargs):
-        super().__init__(model or self.default_decoder(strategy=strategy), **kwargs)
+        model = model or self.default_decoder(strategy=strategy)
+        super().__init__(model, strategy=strategy, **kwargs)
         self.distance = dist or distance.Distance()
 
-    def default_decoder(self, size=100, strategy=None):
+    @staticmethod
+    def default_decoder(size=100, strategy=None):
         """
         Create a simple decoder.
         """
