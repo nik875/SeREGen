@@ -233,8 +233,8 @@ class KMerCountsPipeline(Pipeline):
     """
     Automated pipeline using KMer Counts. Optionally compresses input data before training model.
     """
-    def __init__(self, counter=None, model=None, compressor=None, quiet=False):
-        super().__init__(model=model, quiet=quiet, decoder=DistanceDecoder(dist=cosine))
+    def __init__(self, counter=None, compressor=None, **kwargs):
+        super().__init__(decoder=DistanceDecoder(dist=cosine), **kwargs)
         self.counter = counter
         self.K_ = self.counter.k if self.counter else None
         self.repr_size_ = self.model.properties['repr_size'] if self.model else None
@@ -354,10 +354,9 @@ class HomologousSequencePipeline(Pipeline):
     """
     VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
 
-    def __init__(self, converter=None, model=None, quiet=False):
-        super().__init__(model=model, decoder=DistanceDecoder(dist=alignment), quiet=quiet)
+    def __init__(self, converter=None, **kwargs):
+        super().__init__(decoder=DistanceDecoder(dist=alignment), **kwargs)
         self.converter = converter
-        self.model = model
 
     def create_converter(self, *args, **kwargs):
         """
