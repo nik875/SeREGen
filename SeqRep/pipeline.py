@@ -343,6 +343,8 @@ class KMerCountsPipeline(Pipeline):
         if not self.quiet:
             print('Training model...')
         self.model.fit(self.preproc_reprs, distance_on=distance_on, batch_size=batch_size, **kwargs)
+        if not self.quiet:
+            print('Transforming dataset...')
         self.transform_dataset(batch_size=batch_size)
         dec_fit_args = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.model.fit_decoder(self.preproc_reprs, distance_on=distance_on, epoch_limit=100,
@@ -519,6 +521,8 @@ class HomologousSequencePipeline(Pipeline):
         if not self.quiet:
             print('Training model...')
         self.model.fit(self.preproc_reprs, batch_size=batch_size, **kwargs)
+        if not self.quiet:
+            print('Transforming dataset...')
         self.transform_dataset(batch_size=batch_size)
         kwargs = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.model.fit_decoder(self.preproc_reprs, epoch_limit=100, encodings=self.reprs,
