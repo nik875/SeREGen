@@ -142,9 +142,17 @@ class Pipeline:
         contents = os.listdir(savedir)
         kwargs = cls._load_special(savedir)
         if 'model' in contents:
-            decoder = DistanceDecoder.load(os.path.join(savedir, 'model'), quiet=quiet)
-            model = ComparativeEncoder.load(os.path.join(savedir, 'model'), strategy=strategy,
-                                            quiet=quiet)
+            thisdir = os.path.join(savedir, 'model')
+            if os.path.exists(os.path.join(thisdir, 'encoder')):
+                model = ComparativeEncoder.load(thisdir, strategy=strategy, quiet=quiet)
+            else:
+                print('Warning: encoder missing!')
+                model = None
+            if os.path.exists(os.path.join(thisdir, 'decoder')):
+                decoder = DistanceDecoder.load(thisdir, quiet=quiet)
+            else:
+                print('Warning: decoder missing!')
+                decoder = None
         else:
             print('Warning: models missing!')
             model, decoder = None, None
