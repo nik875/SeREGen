@@ -236,17 +236,17 @@ class DistanceDecoder(Model):
         super().__init__(model or self.default_decoder(strategy=strategy), **kwargs)
         self.distance = dist or distance.Distance()
 
-    def default_decoder(self, size=100, depth=3, strategy=None):
+    def default_decoder(self, size=100, strategy=None):
         """
         Create a simple decoder.
         """
         strategy = strategy or tf.distribute.get_strategy()
         with strategy.scope():
             dec_input = tf.keras.layers.Input((1,))
-            if depth:
-                x = tf.keras.layers.Dense(size, activation='relu')(dec_input)
-            for _ in range(depth - 1):
-                x = tf.keras.layers.Dense(size, activation='relu')(x)
+            x = tf.keras.layers.Dense(size, activation='relu')(dec_input)
+            x = tf.keras.layers.Dense(size, activation='relu')(x)
+            x = tf.keras.layers.Dropout(rate=.1)(x)
+            x = tf.keras.layers.Dense(size, activation='relu')(x)
             x = tf.keras.layers.Dense(1, activation='relu')(x)
             decoder = tf.keras.Model(inputs=dec_input, outputs=x)
             decoder.compile(optimizer='adam',
