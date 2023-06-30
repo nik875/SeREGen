@@ -518,7 +518,7 @@ class HomologousSequencePipeline(Pipeline):
         if not self.quiet:
             print('Training model...')
         self.model.fit(self.preproc_reprs, **kwargs)
-        kwargs = {k:v for k, v in kwargs if k in ['jobs', 'chunksize']}
+        kwargs = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.model.fit_decoder(self.preproc_reprs, epoch_limit=100, **kwargs)
 
     def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
