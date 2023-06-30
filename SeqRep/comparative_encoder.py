@@ -205,7 +205,14 @@ class ComparativeEncoder(ComparativeModel):
         @param batch_size: Batch size for .predict(), required for progress bar. Slows execution.
         @return np.ndarray: Representations for all sequences in data.
         """
-        return self.encoder.predict(data, batch_size=batch_size)
+        dataset = tf.data.Dataset.from_tensor_slices(data)
+        dataset = dataset.batch(dataset)
+
+        options = tf.data.Options()
+        options.experimental_distribute.auto_shard_policy = \
+            tf.data.experimental.AutoShardPolicy.DATA
+        dataset = dataset.with_options(options)
+        return self.encoder.predict(dataset, batch_size=batch_size)
 
     def save(self, path: str):
         """
@@ -303,11 +310,12 @@ class DistanceDecoder(ComparativeModel):
         Transform the given distances between this model's encodings into predicted true distances.
         """
         dataset = tf.data.Dataset.from_tensor_slices(data)
+        dataset = dataset.batch(batch_size)
         options = tf.data.Options()
         options.experimental_distribute.auto_shard_policy = \
             tf.data.experimental.AutoShardPolicy.OFF
         dataset = dataset.with_options(options)
-        return self.model.predict(dataset, batch_size=batch_size)
+        return self.model.predict(dataset)
 
     def save(self, path: str):
         """
