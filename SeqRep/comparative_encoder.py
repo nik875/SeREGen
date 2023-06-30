@@ -302,7 +302,12 @@ class DistanceDecoder(ComparativeModel):
         """
         Transform the given distances between this model's encodings into predicted true distances.
         """
-        return self.model.predict(data, batch_size=batch_size)
+        dataset = tf.data.Dataset.from_tensor_slices(data)
+        options = tf.data.Options()
+        options.experimental_distribute.auto_shard_policy = \
+            tf.data.experimental.AutoShardPolicy.DATA
+        dataset = dataset.with_options(options)
+        return self.model.predict(dataset, batch_size=batch_size)
 
     def save(self, path: str):
         """
