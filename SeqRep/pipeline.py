@@ -21,7 +21,7 @@ from .visualize import repr_scatterplot
 from .kmers import KMerCounter, Nucleotide_AA
 from .compression import PCA, IPCA, AE, Compressor
 from .encoders import ModelBuilder
-from .comparative_encoder import ComparativeEncoder
+from .comparative_encoder import ComparativeEncoder, DistanceDecoder
 from .distance import cosine, IncrementalDistance, alignment
 
 
@@ -29,12 +29,11 @@ class Pipeline:
     """
     An abstract automated pipeline for sequence representation generation.
     """
-    def __init__(self, quiet=False):
+    def __init__(self, model=None, decoder=None, dataset=None, preproc_reprs=None, reprs=None,
+                 quiet=False):
+        self.model, self.decoder = model, decoder
+        self.dataset, self.preproc_reprs, self.reprs = dataset, preproc_reprs, reprs
         self.quiet = quiet
-        self.dataset = None
-        self.model = None
-        self.preproc_reprs = None
-        self.reprs = None
         self.index = None
 
     def load_dataset(self, paths: list[str], header_parser='None', trim_to=0):
@@ -88,14 +87,6 @@ class Pipeline:
         if self.preproc_reprs is None:
             raise ValueError('Fit must be called before transform!')
 
-    # Must be implemented by subclass.
-    def transform_after_preproc(self, data, **kwargs):
-        """
-        Convert preprocessed sequence representations into final encodings.
-        """
-        self._fit_called_check()
-        return data
-
     def transform(self, seqs: list) -> list:
         """
         Transform an array of string sequences to learned representations.
@@ -103,7 +94,7 @@ class Pipeline:
         @return list: Sequence representations.
         """
         self._fit_called_check()
-        return self.transform_after_preproc(self.preprocess_seqs(seqs))
+        return self.model.transform(self.preprocess_seqs(seqs))
 
     def transform_dataset(self, **kwargs) -> np.ndarray:
         """
@@ -111,7 +102,7 @@ class Pipeline:
         Deletes any existing search tree.
         """
         self._fit_called_check()
-        self.reprs = self.transform_after_preproc(self.preproc_reprs, **kwargs)
+        self.reprs = self.model.transform(self.preproc_reprs, **kwargs)
         self.index = None  # Delete existing search tree because we assume reprs have changed.
         return self.reprs
 
@@ -129,40 +120,24 @@ class Pipeline:
             np.save(os.path.join(savedir, 'preproc_reprs.npy'), self.preproc_reprs)
         if self.reprs is not None:
             np.save(os.path.join(savedir, 'reprs.npy'), self.reprs)
-        kwargs = self._save_special_kwargs()
-        kwargs['quiet'] = self.quiet
-        with open(os.path.join(savedir, 'kwargs.json'), 'w') as f:
-            json.dump(kwargs, f)
-        return kwargs
-
-    def _save_special_kwargs(self) -> dict:
-        """
-        Returns all special keyword arguments to save for this Pipeline.
-        """
-        return {}
 
     @classmethod
-    def load(cls, savedir: str, **kwargs):
+    def load(cls, savedir: str, strategy=None, quiet=False, **kwargs):
         """
         Load a Pipeline from the savedir. Keyword arguments passed to ComparativeEncoder load.
         """
         if not os.path.exists(savedir):
             raise ValueError("Directory doesn't exist!")
         contents = os.listdir(savedir)
-        if 'kwargs.json' in contents:
-            with open(os.path.join(savedir, 'kwargs.json'), 'r') as f:
-                kwargs = json.load(f)
-        else:
-            raise ValueError('kwargs.json file necessary!')
-        kwargs.update(cls._load_special(savedir))
-        obj = cls(**kwargs)
+        kwargs = cls._load_special(savedir)
         if 'model' in contents:
-            obj.model = ComparativeEncoder.load(os.path.join(savedir, 'model'), **kwargs)
+            model = ComparativeEncoder.load(os.path.join(savedir, 'model'), strategy=strategy,
+                                            quiet=quiet)
         if 'preproc_reprs.npy' in contents:
-            obj.preproc_reprs = np.load(os.path.join(savedir, 'preproc_reprs.npy'))
+            preproc_reprs = np.load(os.path.join(savedir, 'preproc_reprs.npy'))
         if 'reprs.npy' in contents:
-            obj.reprs = np.load(os.path.join(savedir, 'reprs.npy'))
-        return obj
+            reprs = np.load(os.path.join(savedir, 'reprs.npy'))
+        return cls(model=model, preproc_reprs=preproc_reprs, reprs=reprs, quiet=quiet, **kwargs)
 
     @staticmethod
     def _load_special(savedir: str) -> dict:
@@ -214,9 +189,9 @@ class Pipeline:
         query_enc = self.transform([query])
         dists, ind = self.index.query(query_enc, k=n_neighbors)
         matches = [self.dataset.iloc[i] for i in ind[0]]
-        return self.model.transform_distances(dists[0]), matches
+        return self.decoder.transform(dists[0]), matches
 
-    def evaluate(self, sample_size=None, jobs=1, chunksize=1, distance_transform_batch_size=0):
+    def evaluate(self, sample_size=None, jobs=1, chunksize=1):
         """
         Evaluate the performance of the model by seeing how well we can predict true sequence
         dissimilarity from encoding distances.
@@ -237,7 +212,7 @@ class Pipeline:
             print('Calculating distances between encodings...')
         x = np.fromiter((euclidean(x1[i], x2[i]) for i in (
             range(len(x1)) if self.quiet else tqdm(range(len(x1))))), dtype=np.float64)
-        x = self.model.transform_distances(x, batch_size=distance_transform_batch_size)
+        x = self.decoder.transform(x)
         if not self.quiet:
             print('Calculating distances between model inputs...')
         with mp.Pool(jobs) as p:
@@ -257,11 +232,10 @@ class KMerCountsPipeline(Pipeline):
     Automated pipeline using KMer Counts. Optionally compresses input data before training model.
     """
     def __init__(self, counter=None, model=None, compressor=None, quiet=False):
-        super().__init__(quiet)
+        super().__init__(model=model, quiet=quiet, decoder=DistanceDecoder(dist=cosine))
         self.counter = counter
         self.K_ = self.counter.k if self.counter else None
-        self.model = model
-        self.repr_size_ = self.model.repr_size if self.model else None
+        self.repr_size_ = self.model.properties['repr_size'] if self.model else None
         self.compressor = compressor
 
     def create_kmer_counter(self, K: int, jobs=1, chunksize=1):
@@ -313,7 +287,7 @@ class KMerCountsPipeline(Pipeline):
         builder = ModelBuilder((self.compressor.postcomp_len,), tf.distribute.MirroredStrategy())
         builder.dense(self.compressor.postcomp_len, depth=depth)
         self.model = ComparativeEncoder.from_model_builder(builder, dist=dist or cosine,
-                                                           output_dim=repr_size, quiet=self.quiet)
+                                                           repr_size=repr_size, quiet=self.quiet)
         if not self.quiet:
             self.model.summary()
 
@@ -340,22 +314,12 @@ class KMerCountsPipeline(Pipeline):
             distance_on = self.preproc_reprs
         else:
             distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
-        if not self.quiet:
-            print('Training model...')
         self.model.fit(self.preproc_reprs, distance_on=distance_on, batch_size=batch_size, **kwargs)
         if not self.quiet:
             print('Transforming dataset...')
-        self.transform_dataset(batch_size=batch_size)
-        dec_fit_args = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
-        self.model.fit_decoder(self.preproc_reprs, distance_on=distance_on, epoch_limit=100,
-                               batch_size=batch_size, encodings=self.reprs, **dec_fit_args)
-
-    def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
-        """
-        Transform the given sequences. Accepts keyword arguments for ComparativeEncoder.transform().
-        """
-        super().transform_after_preproc(data)
-        return self.model.transform(data, **kwargs)
+        self.transform_dataset()
+        kwargs = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
+        self.decoder.fit(self.reprs, distance_on, **kwargs)
 
     def save(self, savedir: str):
         super().save(savedir)
@@ -389,7 +353,7 @@ class HomologousSequencePipeline(Pipeline):
     VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
 
     def __init__(self, converter=None, model=None, quiet=False):
-        super().__init__(quiet)
+        super().__init__(model=model, decoder=DistanceDecoder(dist=alignment), quiet=quiet)
         self.converter = converter
         self.model = model
 
@@ -399,7 +363,7 @@ class HomologousSequencePipeline(Pipeline):
         """
         self.converter = Nucleotide_AA(*args, **kwargs)
 
-    def create_model(self, res='low', seq_len=.85, output_dim=2):
+    def create_model(self, res='low', seq_len=.85, repr_size=2):
         """
         Create a model for the Pipeline.
         @param res: Resolution of the model's encoding output. Available options are:
@@ -414,7 +378,7 @@ class HomologousSequencePipeline(Pipeline):
             seq_len == None: Auto-detect the maximum sequence length and use as model input size.
             0 < seq_len < 1: Ensure that this fraction of the total dataset is NOT truncated.
             seq_len >= 1: Trim and pad directly to this length.
-        @param output_dim: Number of dimensions in output encodings (default 2).
+        @param repr_size: Number of dimensions in output encodings (default 2).
         """
         if (seq_len is None or seq_len < 1) and self.dataset is None:
             raise ValueError('Dataset must be loaded before autodetection of sequence length!')
@@ -425,18 +389,18 @@ class HomologousSequencePipeline(Pipeline):
             std = np.std(lengths)
             seq_len = int(target_zscore * std + mean)
         if res == 'low':
-            self.model = self.low_res_model(seq_len, output_dim)
+            self.model = self.low_res_model(seq_len, repr_size)
         elif res == 'medium':
-            self.model = self.medium_res_model(seq_len, output_dim)
+            self.model = self.medium_res_model(seq_len, repr_size)
         elif res == 'high':
-            self.model = self.high_res_model(seq_len, output_dim)
+            self.model = self.high_res_model(seq_len, repr_size)
         elif res == 'ultra':
-            self.model = self.ultra_res_model(seq_len, output_dim)
+            self.model = self.ultra_res_model(seq_len, repr_size)
         if not self.quiet:
             self.model.summary()
 
     @classmethod
-    def low_res_model(cls, seq_len: int, output_dim: int, compress_factor=1, depth=3):
+    def low_res_model(cls, seq_len: int, repr_size: int, compress_factor=1, depth=3):
         """
         Basic dense neural network operating on top of learned embeddings for input sequences.
         """
@@ -445,12 +409,11 @@ class HomologousSequencePipeline(Pipeline):
         builder.transpose()
         builder.dense(seq_len // compress_factor, depth=depth)
         builder.transpose()
-        model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
-                                                      output_dim=output_dim)
+        model = ComparativeEncoder.from_model_builder(builder, dist=alignment, repr_size=repr_size)
         return model
 
     @classmethod
-    def medium_res_model(cls, seq_len: int, output_dim: int, compress_factor=4, conv_filters=16,
+    def medium_res_model(cls, seq_len: int, repr_size: int, compress_factor=4, conv_filters=16,
                          conv_kernel_size=6):
         """
         Convolutional layer operating on 1/4 the length of input sequences.
@@ -461,12 +424,11 @@ class HomologousSequencePipeline(Pipeline):
         builder.dense(seq_len // compress_factor)
         builder.transpose()
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
-                                                      output_dim=output_dim)
+        model = ComparativeEncoder.from_model_builder(builder, dist=alignment, repr_size=repr_size)
         return model
 
     @classmethod
-    def high_res_model(cls, seq_len: int, output_dim: int, compress_factor=4, conv_filters=32,
+    def high_res_model(cls, seq_len: int, repr_size: int, compress_factor=4, conv_filters=32,
                        conv_kernel_size=8, attn_heads=2):
         """
         Convolutional layer + attention block operating on 1/4 the length of input sequences.
@@ -480,11 +442,11 @@ class HomologousSequencePipeline(Pipeline):
         builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
         model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
-                                                      output_dim=output_dim)
+                                                      repr_size=repr_size)
         return model
 
     @classmethod
-    def ultra_res_model(cls, seq_len: int, output_dim: int, compress_factor=1, conv_filters=64,
+    def ultra_res_model(cls, seq_len: int, repr_size: int, compress_factor=1, conv_filters=64,
                         conv_kernel_size=16, attn_heads=4):
         """
         Convolutional layer + attention block operating on full length of input sequences.
@@ -498,7 +460,7 @@ class HomologousSequencePipeline(Pipeline):
         builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
         model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
-                                                      output_dim=output_dim)
+                                                      repr_size=repr_size)
         return model
 
     def preprocess_seq(self, seq: str) -> str:
@@ -522,22 +484,12 @@ class HomologousSequencePipeline(Pipeline):
             print('Warning: using default low-res model...')
             self.create_model()
         super().fit()
-        if not self.quiet:
-            print('Training model...')
         self.model.fit(self.preproc_reprs, batch_size=batch_size, **kwargs)
         if not self.quiet:
             print('Transforming dataset...')
         self.transform_dataset(batch_size=batch_size)
         kwargs = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
-        self.model.fit_decoder(self.preproc_reprs, epoch_limit=100, encodings=self.reprs,
-                               batch_size=batch_size, **kwargs)
-
-    def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
-        """
-        Transform the given sequences. Accepts keyword arguments for ComparativeEncoder.transform().
-        """
-        super().transform_after_preproc(data)
-        return self.model.transform(data, **kwargs)
+        self.decoder.fit(self.reprs, self.preproc_reprs, **kwargs)
 
     def save(self, savedir: str):
         super().save(savedir)

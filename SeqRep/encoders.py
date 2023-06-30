@@ -122,14 +122,14 @@ class ModelBuilder:
         return tuple(self.current.shape[1:])
 
     @_apply_strategy
-    def compile(self, output_dim=2) -> tf.keras.Model:
+    def compile(self, repr_size=2) -> tf.keras.Model:
         """
         Create and return an encoder model.
-        @param output_dim: Number of dimensions of output point (default 2 for visualization).
+        @param repr_size: Number of dimensions of output point (default 2 for visualization).
         @return tf.keras.Model
         """
         self.flatten()
-        self.dense(output_dim, activation=None)  # Create special output layer
+        self.dense(repr_size, activation=None)  # Create special output layer
         return tf.keras.Model(inputs=self.inputs, outputs=self.current)
 
     @_apply_strategy
