@@ -63,6 +63,10 @@ class ComparativeEncoder:
         self.distance = dist or distance.Distance()
         self.strategy = strategy or tf.distribute.get_strategy()
 
+        self.decoder = decoder
+        if not self.decoder:
+            self.init_decoder()
+
         with self.strategy.scope():
             inputa = tf.keras.layers.Input(input_shape, name='input_a', dtype=input_dtype)
             inputb = tf.keras.layers.Input(input_shape, name='input_b', dtype=input_dtype)
@@ -72,10 +76,6 @@ class ComparativeEncoder:
             )
             self.comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
             self.comparative_model.compile(optimizer='adam', loss=correlation_coefficient_loss)
-
-        self.decoder = decoder
-        if not self.decoder:
-            self.init_decoder()
 
     def init_decoder(self, size=100, depth=3):
         """
