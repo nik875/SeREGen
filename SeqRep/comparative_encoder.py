@@ -232,19 +232,20 @@ class DistanceDecoder(Model):
     """
     Decoder model to convert generated distances into true distances.
     """
-    def __init__(self, model=None, dist=None, **kwargs):
-        super().__init__(model or self.default_decoder(), **kwargs)
+    def __init__(self, model=None, dist=None, strategy=None, **kwargs):
+        super().__init__(model or self.default_decoder(strategy=strategy), **kwargs)
         self.distance = dist or distance.Distance()
 
-    def default_decoder(self, size=100, depth=3):
+    def default_decoder(self, size=100, depth=3, strategy=None):
         """
         Create a simple decoder.
         """
-        strategy = self.strategy if hasattr(self, 'strategy') else tf.distribute.get_strategy()
+        strategy = strategy or tf.distribute.get_strategy()
         with strategy.scope():
             dec_input = tf.keras.layers.Input((1,))
-            x = dec_input
-            for _ in range(depth):
+            if depth:
+                x = tf.keras.layers.Dense(size, activation='relu')(dec_input)
+            for _ in range(depth - 1):
                 x = tf.keras.layers.Dense(size, activation='relu')(x)
             x = tf.keras.layers.Dense(1, activation='relu')(x)
             decoder = tf.keras.Model(inputs=dec_input, outputs=x)
