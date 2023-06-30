@@ -325,7 +325,7 @@ class KMerCountsPipeline(Pipeline):
         return self.compressor.count_kmers(self.counter, seqs, batch_size)
 
     def fit(self, preproc_batch_size=0, dist_on_preproc=False, incremental_dist=True,
-            **model_fit_args):
+            batch_size=1000, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -342,11 +342,11 @@ class KMerCountsPipeline(Pipeline):
             distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
         if not self.quiet:
             print('Training model...')
-        self.model.fit(self.preproc_reprs, distance_on=distance_on, **model_fit_args)
-        self.transform_dataset()
-        dec_fit_args = {k:v for k, v in model_fit_args if k in ['jobs', 'chunksize']}
+        self.model.fit(self.preproc_reprs, distance_on=distance_on, batch_size=batch_size, **kwargs)
+        self.transform_dataset(batch_size=batch_size)
+        dec_fit_args = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.model.fit_decoder(self.preproc_reprs, distance_on=distance_on, epoch_limit=100,
-                               encodings=self.reprs, **dec_fit_args)
+                               batch_size=batch_size, encodings=self.reprs, **dec_fit_args)
 
     def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
         """
@@ -507,7 +507,7 @@ class HomologousSequencePipeline(Pipeline):
             self.create_converter()
         return self.converter.transform(seqs)
 
-    def fit(self, **kwargs):
+    def fit(self, batch_size=256, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -518,10 +518,11 @@ class HomologousSequencePipeline(Pipeline):
         super().fit()
         if not self.quiet:
             print('Training model...')
-        self.model.fit(self.preproc_reprs, **kwargs)
-        self.transform_dataset()
+        self.model.fit(self.preproc_reprs, batch_size=batch_size, **kwargs)
+        self.transform_dataset(batch_size=batch_size)
         kwargs = {k:v for k, v in kwargs.items() if k in ['jobs', 'chunksize']}
-        self.model.fit_decoder(self.preproc_reprs, epoch_limit=100, encodings=self.reprs, **kwargs)
+        self.model.fit_decoder(self.preproc_reprs, epoch_limit=100, encodings=self.reprs,
+                               batch_size=batch_size, **kwargs)
 
     def transform_after_preproc(self, data: np.ndarray, **kwargs) -> np.ndarray:
         """
