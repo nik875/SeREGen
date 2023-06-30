@@ -95,35 +95,35 @@ class Pipeline:
         self.preproc_reprs = self.preprocess_seqs(self.dataset['seqs'].to_numpy(), **kwargs)
 
     # Should be overridden to automatically select distance_on
-    def fit_decoder(self, distance_on: np.ndarray, **kwargs):
+    def fit_decoder(self, distance_on: np.ndarray, transform_batch_size: int, **kwargs):
         """
         Fit the decoder based on the model's representations.
         """
         if not self.quiet:
             print('Transforming dataset...')
-        self.transform_dataset()
+        self.transform_dataset(transform_batch_size)
         self.decoder.fit(self.reprs, distance_on, epochs=10, **kwargs)
 
     def _fit_called_check(self):
         if self.preproc_reprs is None:
             raise ValueError('Fit must be called before transform!')
 
-    def transform(self, seqs: list) -> list:
+    def transform(self, seqs: list, batch_size: int) -> list:
         """
         Transform an array of string sequences to learned representations.
         @param seqs: List of string sequences to transform.
         @return list: Sequence representations.
         """
         self._fit_called_check()
-        return self.model.transform(self.preprocess_seqs(seqs))
+        return self.model.transform(self.preprocess_seqs(seqs), batch_size)
 
-    def transform_dataset(self, **kwargs) -> np.ndarray:
+    def transform_dataset(self, batch_size: int, **kwargs) -> np.ndarray:
         """
         Transforms the loaded dataset into representations. Saves as self.reprs and returns result.
         Deletes any existing search tree.
         """
         self._fit_called_check()
-        self.reprs = self.model.transform(self.preproc_reprs, **kwargs)
+        self.reprs = self.model.transform(self.preproc_reprs, batch_size, **kwargs)
         self.index = None  # Delete existing search tree because we assume reprs have changed.
         return self.reprs
 
@@ -219,7 +219,7 @@ class Pipeline:
             if not self.quiet:
                 print('Creating search index...')
             self.index = BallTree(self.reprs)
-        query_enc = self.transform([query])
+        query_enc = self.transform([query], 1)
         dists, ind = self.index.query(query_enc, k=n_neighbors)
         matches = [self.dataset.iloc[i] for i in ind[0]]
         return self.decoder.transform(dists[0]), matches
@@ -349,7 +349,7 @@ class KMerCountsPipeline(Pipeline):
         else:
             distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
         self.model.fit(self.preproc_reprs, distance_on=distance_on, batch_size=batch_size, **kwargs)
-        self.fit_decoder(distance_on)
+        self.fit_decoder(distance_on, batch_size)
 
     def save(self, savedir: str):
         super().save(savedir)
@@ -515,7 +515,7 @@ class HomologousSequencePipeline(Pipeline):
             self.create_model()
         super().fit()
         self.model.fit(self.preproc_reprs, batch_size=batch_size, **kwargs)
-        self.fit_decoder(self.preproc_reprs)
+        self.fit_decoder(self.preproc_reprs, batch_size)
 
     def save(self, savedir: str):
         super().save(savedir)
