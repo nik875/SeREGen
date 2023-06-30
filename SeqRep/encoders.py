@@ -37,7 +37,8 @@ class ModelBuilder:
     """
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
-    def __init__(self, input_shape: tuple, input_dtype=None, distribute_strategy=None):
+    def __init__(self, input_shape: tuple, input_dtype=None, distribute_strategy=None,
+                 v_scope='encoder'):
         """
         Create a new ModelBuilder object.
         @param input_shape: Shape of model input.
@@ -46,16 +47,18 @@ class ModelBuilder:
         on a single GPU.
         """
         self.strategy = distribute_strategy or tf.distribute.get_strategy()
+        self.v_scope = v_scope
         with self.strategy.scope():
             self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)
         self.current = self.inputs
 
     # pylint: disable=no-self-argument,not-callable
-    def _apply_strategy(fn):
-        def in_strategy(self, *args, **kwargs):
-            with self.strategy.scope():
-                return fn(self, *args, **kwargs)
-        return in_strategy
+    def _apply_scopes(fn):
+        def in_scopes(self, *args, **kwargs):
+            with tf.variable_scope(self.v_scope):
+                with self.strategy.scope():
+                    return fn(self, *args, **kwargs)
+        return in_scopes
 
     @classmethod
     def text_input(cls, vocab: list[str], embed_dim=None, max_len=None, **kwargs):
@@ -84,7 +87,7 @@ class ModelBuilder:
             obj.one_hot_encoding(len(vocab) + 2)
         return obj
 
-    @_apply_strategy
+    @_apply_scopes
     def embedding(self, input_dim: int, output_dim: int, mask_zero=True, **kwargs):
         """
         Adds an Embedding layer to preprocess ordinally encoded input sequences.
@@ -97,7 +100,7 @@ class ModelBuilder:
                                                  mask_zero=mask_zero,
                                                  **kwargs)(self.current)
 
-    @_apply_strategy
+    @_apply_scopes
     def one_hot_encoding(self, num_tokens: int, **kwargs):
         """
         Adds a CategoryEncoding layer configured to one-hot encode input sequences. Useful when
@@ -121,7 +124,7 @@ class ModelBuilder:
         """
         return tuple(self.current.shape[1:])
 
-    @_apply_strategy
+    @_apply_scopes
     def compile(self, repr_size=2) -> tf.keras.Model:
         """
         Create and return an encoder model.
@@ -132,7 +135,7 @@ class ModelBuilder:
         self.dense(repr_size, activation=None)  # Create special output layer
         return tf.keras.Model(inputs=self.inputs, outputs=self.current)
 
-    @_apply_strategy
+    @_apply_scopes
     def custom_layer(self, layer: tf.keras.layers.Layer):
         """
         Add a custom layer to the model.
@@ -140,7 +143,7 @@ class ModelBuilder:
         """
         self.current = layer(self.current)
 
-    @_apply_strategy
+    @_apply_scopes
     def reshape(self, new_shape: tuple, **kwargs):
         """
         Add a reshape layer. Additional keyword arguments accepted.
@@ -161,14 +164,14 @@ class ModelBuilder:
         shape[a] = tmp
         self.reshape(tuple(shape), **kwargs)
 
-    @_apply_strategy
+    @_apply_scopes
     def flatten(self, **kwargs):
         """
         Add a flatten layer. Additional keyword arguments accepted.
         """
         self.current = tf.keras.layers.Flatten(**kwargs)(self.current)
 
-    @_apply_strategy
+    @_apply_scopes
     def dropout(self, rate, **kwargs):
         """
         Add a dropout layer. Additional keyword arguments accepted.
@@ -176,7 +179,7 @@ class ModelBuilder:
         """
         self.current = tf.keras.layers.Dropout(rate=rate, **kwargs)(self.current)
 
-    @_apply_strategy
+    @_apply_scopes
     def dense(self, size: int, depth=1, activation='relu', **kwargs):
         """
         Procedurally add dense layers to the model.
@@ -189,7 +192,7 @@ class ModelBuilder:
             self.current = tf.keras.layers.Dense(size, activation=activation,
                                                  **kwargs)(self.current)
 
-    @_apply_strategy
+    @_apply_scopes
     def conv1D(self, filters: int, kernel_size: int, output_size: int, **kwargs):
         """
         Add a convolutional layer.
@@ -214,7 +217,7 @@ class ModelBuilder:
         self.current = tf.keras.layers.BatchNormalization()(self.current)
         self.dense(output_size, activation='relu')
 
-    @_apply_strategy
+    @_apply_scopes
     def attention(self, num_heads: int, output_size: int, rate=.1):
         """
         Add an attention layer. Embeddings must be generated beforehand.

@@ -20,11 +20,16 @@ class Model:
     """
     Generic model class. Stores some useful common functions.
     """
-    def __init__(self, model: tf.keras.Model, strategy=None, quiet=False, properties=None):
+    def __init__(self, model: tf.keras.Model, quiet=False, properties=None):
         self.model = model
-        self.strategy = strategy or tf.distribute.get_strategy()
         self.quiet = quiet
         self.properties = {} if properties is None else properties
+
+    def select_strategy(self, strategy):
+        """
+        Select either the given strategy or the default strategy.
+        """
+        return strategy or tf.distribute.get_strategy()
 
     @staticmethod
     def _run_tf_fn(init_message=None):
@@ -49,7 +54,8 @@ class ComparativeEncoder(Model):
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, model: tf.keras.Model, dist=None, **kwargs):
+    def __init__(self, model: tf.keras.Model, dist=None, v_scope='encoder', strategy=None,
+                 **kwargs):
         """
         @param encoder: TensorFlow model that must support .train() and .__call__() at minimum.
         .predict() required for progress bar when transforming data.
@@ -59,23 +65,25 @@ class ComparativeEncoder(Model):
             'input_shape': model.layers[0].output_shape[0][1:],
             'input_dtype': model.layers[0].dtype,
             'repr_size': model.layers[-1].output_shape[1:],
-            'depth': len(model.layers)
+            'depth': len(model.layers),
+            'v_scope': v_scope
         }
         self.encoder = model
         self.distance = dist or distance.Distance()
-        strategy = kwargs['strategy'] if 'strategy' in kwargs else tf.distribute.get_strategy()
+        self.strategy = self.select_strategy(strategy)
 
-        with strategy.scope():
-            inputa = tf.keras.layers.Input(properties['input_shape'], name='input_a',
-                                           dtype=properties['input_dtype'])
-            inputb = tf.keras.layers.Input(properties['input_shape'], name='input_b',
-                                           dtype=properties['input_dtype'])
-            distances = self.DistanceLayer()(
-                self.encoder(inputa),
-                self.encoder(inputb),
-            )
-            comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
-            comparative_model.compile(optimizer='adam', loss=self.correlation_coefficient_loss)
+        with tf.variable_scope(v_scope):
+            with self.strategy.scope():
+                inputa = tf.keras.layers.Input(properties['input_shape'], name='input_a',
+                                               dtype=properties['input_dtype'])
+                inputb = tf.keras.layers.Input(properties['input_shape'], name='input_b',
+                                               dtype=properties['input_dtype'])
+                distances = self.DistanceLayer()(
+                    self.encoder(inputa),
+                    self.encoder(inputb),
+                )
+                comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
+                comparative_model.compile(optimizer='adam', loss=self.correlation_coefficient_loss)
         super().__init__(comparative_model, properties=properties, **kwargs)
 
     @classmethod
@@ -85,7 +93,7 @@ class ComparativeEncoder(Model):
         distribute strategy.
         """
         encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
-        return cls(encoder, strategy=builder.strategy, **kwargs)
+        return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
 
     class DistanceLayer(tf.keras.layers.Layer):
         """
@@ -197,7 +205,7 @@ class ComparativeEncoder(Model):
             pickle.dump(self.distance, f)
 
     @classmethod
-    def load(cls, path: str, strategy=None, **kwargs):
+    def load(cls, path: str, strategy=None, v_scope_name='encoder', **kwargs):
         """
         Load an encoder model and create a new ComparativeEncoder.
         @param path: path where model is saved.
@@ -208,9 +216,10 @@ class ComparativeEncoder(Model):
             raise ValueError('Encoder save file is necessary for loading a model!')
         custom_objects = {'correlation_coefficient_loss': cls.correlation_coefficient_loss}
         strategy = strategy or tf.distribute.get_strategy()
-        with strategy.scope():
-            with tf.keras.utils.custom_object_scope(custom_objects):
-                encoder = tf.keras.models.load_model(os.path.join(path, 'encoder'))
+        with tf.variable_scope(v_scope_name):
+            with strategy.scope():
+                with tf.keras.utils.custom_object_scope(custom_objects):
+                    encoder = tf.keras.models.load_model(os.path.join(path, 'encoder'))
 
         if not os.path.exists(os.path.join(path, 'distance.pkl')):
             print('Warning: distance save file missing! Inferencing is possible, but training and '
@@ -232,26 +241,28 @@ class DistanceDecoder(Model):
     """
     Decoder model to convert generated distances into true distances.
     """
-    def __init__(self, model=None, dist=None, strategy=None, **kwargs):
-        self.strategy = strategy or tf.distribute.get_strategy()
+    def __init__(self, model=None, dist=None, strategy=None, v_scope='decoder', **kwargs):
+        self.strategy = self.select_strategy(strategy)
+        self.v_scope = v_scope
         model = model or self.default_decoder()
-        super().__init__(model, strategy=strategy, **kwargs)
+        super().__init__(model, **kwargs)
         self.distance = dist or distance.Distance()
 
     def default_decoder(self, size=100):
         """
         Create a simple decoder.
         """
-        with self.strategy.scope():
-            dec_input = tf.keras.layers.Input((1,))
-            x = tf.keras.layers.Dense(size, activation='relu')(dec_input)
-            x = tf.keras.layers.Dense(size, activation='relu')(x)
-            x = tf.keras.layers.Dropout(rate=.1)(x)
-            x = tf.keras.layers.Dense(size, activation='relu')(x)
-            x = tf.keras.layers.Dense(1, activation='relu')(x)
-            decoder = tf.keras.Model(inputs=dec_input, outputs=x)
-            decoder.compile(optimizer='adam',
-                            loss=tf.keras.losses.MeanAbsolutePercentageError())
+        with tf.variable_scope(self.v_scope):
+            with self.strategy.scope():
+                dec_input = tf.keras.layers.Input((1,))
+                x = tf.keras.layers.Dense(size, activation='relu')(dec_input)
+                x = tf.keras.layers.Dense(size, activation='relu')(x)
+                x = tf.keras.layers.Dropout(rate=.1)(x)
+                x = tf.keras.layers.Dense(size, activation='relu')(x)
+                x = tf.keras.layers.Dense(1, activation='relu')(x)
+                decoder = tf.keras.Model(inputs=dec_input, outputs=x)
+                decoder.compile(optimizer='adam',
+                                loss=tf.keras.losses.MeanAbsolutePercentageError())
         return decoder
 
     @Model._run_tf_fn('Training DistanceDecoder...')
@@ -303,7 +314,7 @@ class DistanceDecoder(Model):
             pickle.dump(self.distance, f)
 
     @classmethod
-    def load(cls, path: str, strategy=None, **kwargs):
+    def load(cls, path: str, strategy=None, v_scope='decoder', **kwargs):
         """
         Load an decoder model and create a new DistanceDecoder.
         @param path: path where model is saved.
@@ -313,8 +324,9 @@ class DistanceDecoder(Model):
         if not os.path.exists(os.path.join(path, 'decoder')):
             raise ValueError('Decoder save file is necessary for loading a model!')
         strategy = strategy or tf.distribute.get_strategy()
-        with strategy.scope():
-            model = tf.keras.models.load_model(os.path.join(path, 'decoder'))
+        with tf.variable_scope(v_scope):
+            with strategy.scope():
+                model = tf.keras.models.load_model(os.path.join(path, 'decoder'))
 
         if not os.path.exists(os.path.join(path, 'distance.pkl')):
             print('Warning: distance save file missing! Inferencing is possible, but training and '
@@ -323,7 +335,7 @@ class DistanceDecoder(Model):
         else:
             with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
                 dist = pickle.load(f)
-        return cls(model=model, dist=dist, strategy=strategy, **kwargs)
+        return cls(model=model, dist=dist, strategy=strategy, v_scope=v_scope, **kwargs)
 
     def summary(self):
         """
