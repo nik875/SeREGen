@@ -63,8 +63,9 @@ class ComparativeEncoder(Model):
         }
         self.encoder = model
         self.distance = dist or distance.Distance()
+        strategy = kwargs['strategy'] if 'strategy' in kwargs else tf.distribute.get_strategy()
 
-        with self.strategy.scope():
+        with strategy.scope():
             inputa = tf.keras.layers.Input(properties['input_shape'], name='input_a',
                                            dtype=properties['input_dtype'])
             inputb = tf.keras.layers.Input(properties['input_shape'], name='input_b',
