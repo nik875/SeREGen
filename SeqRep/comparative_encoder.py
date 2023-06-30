@@ -12,7 +12,7 @@ import tensorflow as tf
 from keras import backend as K
 from tqdm import tqdm
 
-from . import distance
+from .distance import Distance
 from .encoders import ModelBuilder
 
 
@@ -20,12 +20,21 @@ class ComparativeModel:
     """
     Abstract ComparativeModel class. Stores some useful common functions.
     """
-    def __init__(self, model: tf.keras.Model, dist: distance.Distance, quiet=False,
-                 properties=None):
-        self.model = model
-        self.distance = dist
+    def __init__(self, v_scope: str, dist=None, model=None, strategy=None,
+                 quiet=False, properties=None):
+        strategy = strategy or tf.distribute.get_strategy()
+        self.distance = dist or Distance()
         self.quiet = quiet
         self.properties = {} if properties is None else properties
+        with tf.name_scope(v_scope):
+            with strategy.scope():
+                self.model = model or self.create_model()
+
+    def create_model(self):
+        """
+        Create a model. Scopes automatically applied.
+        """
+        return None
 
     def select_strategy(self, strategy):
         """
@@ -88,43 +97,38 @@ class ComparativeEncoder(ComparativeModel):
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, model: tf.keras.Model, dist=None, v_scope='encoder', strategy=None,
-                 **kwargs):
+    def __init__(self, encoder: tf.keras.Model, v_scope='encoder', **kwargs):
         """
-        @param encoder: TensorFlow model that must support .train() and .__call__() at minimum.
-        .predict() required for progress bar when transforming data.
+        @param encoder: TensorFlow model that must support .train() and .predict() at minimum.
         @param dist: distance metric to use when comparing two sequences.
         """
         properties = {
-            'input_shape': model.layers[0].output_shape[0][1:],
-            'input_dtype': model.layers[0].dtype,
-            'repr_size': model.layers[-1].output_shape[1:],
-            'depth': len(model.layers),
-            'v_scope': v_scope
+            'input_shape': encoder.layers[0].output_shape[0][1:],
+            'input_dtype': encoder.layers[0].dtype,
+            'repr_size': encoder.layers[-1].output_shape[1:],
+            'depth': len(encoder.layers),
         }
-        self.encoder = model
-        self.distance = dist or distance.Distance()
-        self.strategy = self.select_strategy(strategy)
+        self.encoder = encoder
+        super().__init__(v_scope, properties=properties, **kwargs)
 
-        with tf.name_scope(v_scope):
-            with self.strategy.scope():
-                inputa = tf.keras.layers.Input(properties['input_shape'], name='input_a',
-                                               dtype=properties['input_dtype'])
-                inputb = tf.keras.layers.Input(properties['input_shape'], name='input_b',
-                                               dtype=properties['input_dtype'])
-                distances = self.DistanceLayer()(
-                    self.encoder(inputa),
-                    self.encoder(inputb),
-                )
-                comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
-                comparative_model.compile(optimizer='adam', loss=self.correlation_coefficient_loss)
-        super().__init__(comparative_model, properties=properties, **kwargs)
+    def create_model(self):
+        inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
+                                       dtype=self.properties['input_dtype'])
+        inputb = tf.keras.layers.Input(self.properties['input_shape'], name='input_b',
+                                       dtype=self.properties['input_dtype'])
+        distances = self.DistanceLayer()(
+            self.encoder(inputa),
+            self.encoder(inputb),
+        )
+        comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
+        comparative_model.compile(optimizer='adam', loss=self.correlation_coefficient_loss)
+        return comparative_model
 
     @classmethod
     def from_model_builder(cls, builder: ModelBuilder, repr_size=None, **kwargs):
         """
         Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
-        distribute strategy.
+        distribute strategy and variable scope.
         """
         encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
         return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
@@ -187,9 +191,9 @@ class ComparativeEncoder(ComparativeModel):
 
         return self.model.fit(train_data, epochs=1).history
 
-    def fit(self, *args, distance_on=None, **kwargs):
+    def fit(self, *args, distance_on=None, patience=3, **kwargs):
         distance_on = distance_on if distance_on is not None else args[0]
-        super().fit(*args, distance_on, **kwargs)
+        super().fit(*args, distance_on, patience=patience, **kwargs)
 
     @ComparativeModel._run_tf_fn()
     def transform(self, data: np.ndarray, batch_size: int) -> np.ndarray:
@@ -212,7 +216,7 @@ class ComparativeEncoder(ComparativeModel):
             pickle.dump(self.distance, f)
 
     @classmethod
-    def load(cls, path: str, strategy=None, v_scope_name='encoder', **kwargs):
+    def load(cls, path: str, strategy=None, v_scope='encoder', **kwargs):
         """
         Load an encoder model and create a new ComparativeEncoder.
         @param path: path where model is saved.
@@ -223,7 +227,7 @@ class ComparativeEncoder(ComparativeModel):
             raise ValueError('Encoder save file is necessary for loading a model!')
         custom_objects = {'correlation_coefficient_loss': cls.correlation_coefficient_loss}
         strategy = strategy or tf.distribute.get_strategy()
-        with tf.name_scope(v_scope_name):
+        with tf.name_scope(v_scope):
             with strategy.scope():
                 with tf.keras.utils.custom_object_scope(custom_objects):
                     encoder = tf.keras.models.load_model(os.path.join(path, 'encoder'))
@@ -248,28 +252,18 @@ class DistanceDecoder(ComparativeModel):
     """
     Decoder model to convert generated distances into true distances.
     """
-    def __init__(self, model=None, dist=None, strategy=None, v_scope='decoder', **kwargs):
-        self.strategy = self.select_strategy(strategy)
-        self.v_scope = v_scope
-        model = model or self.default_decoder()
-        super().__init__(model, **kwargs)
-        self.distance = dist or distance.Distance()
+    def __init__(self, v_scope='decoder', **kwargs):
+        super().__init__(v_scope, **kwargs)
 
-    def default_decoder(self, size=100):
-        """
-        Create a simple decoder.
-        """
-        with tf.name_scope(self.v_scope):
-            with self.strategy.scope():
-                dec_input = tf.keras.layers.Input((1,))
-                x = tf.keras.layers.Dense(size, activation='relu')(dec_input)
-                x = tf.keras.layers.Dense(size, activation='relu')(x)
-                x = tf.keras.layers.Dropout(rate=.1)(x)
-                x = tf.keras.layers.Dense(size, activation='relu')(x)
-                x = tf.keras.layers.Dense(1, activation='relu')(x)
-                decoder = tf.keras.Model(inputs=dec_input, outputs=x)
-                decoder.compile(optimizer='adam',
-                                loss=tf.keras.losses.MeanAbsolutePercentageError())
+    def create_model(self):
+        dec_input = tf.keras.layers.Input((1,))
+        x = tf.keras.layers.Dense(100, activation='relu')(dec_input)
+        x = tf.keras.layers.Dense(100, activation='relu')(x)
+        x = tf.keras.layers.Dropout(rate=.1)(x)
+        x = tf.keras.layers.Dense(100, activation='relu')(x)
+        x = tf.keras.layers.Dense(1, activation='relu')(x)
+        decoder = tf.keras.Model(inputs=dec_input, outputs=x)
+        decoder.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError())
         return decoder
 
     # pylint: disable=arguments-differ
@@ -281,8 +275,6 @@ class DistanceDecoder(ComparativeModel):
         p2 = rng.permutation(distance_on.shape[0])
         y2 = distance_on[p2]
 
-        if not self.quiet:
-            print('Calculating distances between model inputs...')
         with mp.Pool(jobs) as p:
             it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
             y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
@@ -290,8 +282,6 @@ class DistanceDecoder(ComparativeModel):
         # distance, even if the postprocessed distances only have meaning in context of the current
         # dataset because of normalization.
         x1, x2 = encodings[p1], encodings[p2]
-        if not self.quiet:
-            print('Calculating euclidean distances between encodings...')
         x = np.fromiter((euclidean(x1[i], x2[i]) for i in (range(len(y)) if self.quiet else
                                                         tqdm(range(len(y))))), dtype=np.float64)
 
