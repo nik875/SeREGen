@@ -349,7 +349,8 @@ class KMerCountsPipeline(Pipeline):
         else:
             distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
         self.model.fit(self.preproc_reprs, distance_on=distance_on, batch_size=batch_size, **kwargs)
-        self.fit_decoder(distance_on, batch_size)
+        kwargs = {k:v for k,v in kwargs.items() if k in ['jobs', 'chunksize']}
+        self.fit_decoder(distance_on, batch_size, **kwargs)
 
     def save(self, savedir: str):
         super().save(savedir)
