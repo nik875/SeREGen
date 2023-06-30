@@ -29,8 +29,8 @@ class Model:
     @staticmethod
     def _run_tf_fn(init_message=None):
         def fit_dec(fn):
-            start_time = time.time()
             def fit_output_mgmt(self, *args, **kwargs):
+                start_time = time.time()
                 if self.quiet:
                     tf.keras.utils.disable_interactive_logging()
                 elif init_message:
