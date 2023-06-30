@@ -44,6 +44,7 @@ class ComparativeModel:
         self.distance = dist or Distance()
         self.quiet = quiet
         self.properties = {} if properties is None else properties
+        self.history = {}
         with tf.name_scope(v_scope):
             with strategy.scope():
                 self.model = model or self.create_model()
@@ -77,7 +78,6 @@ class ComparativeModel:
         """
         if patience < 1:
             raise ValueError('Patience value must be >1.')
-        history = {}
         for i in range(epochs):
             start = time.time()
             if not self.quiet:
@@ -85,15 +85,15 @@ class ComparativeModel:
             this_history = self.train_step(*args, **kwargs)
             if not self.quiet:
                 print(f'Epoch time: {time.time() - start}')
-            history = {k: v + this_history[k] for k, v in history.items()} if history else \
-                this_history
+            self.history = {k: v + this_history[k] for k, v in self.history.items()} if \
+                self.history else this_history
             if not early_stop:
                 continue
-            past_losses = history['loss'][-patience - 1:]
+            past_losses = self.history['loss'][-patience - 1:]
             if past_losses[-1] - past_losses[0] < -min_delta:
                 print('Stopping early due to lack of improvement!')
                 break
-        return history
+        return self.history
 
 
 class ComparativeEncoder(ComparativeModel):
