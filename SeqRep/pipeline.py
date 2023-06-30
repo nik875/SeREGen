@@ -355,10 +355,9 @@ class HomologousSequencePipeline(Pipeline):
     """
     VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
 
-    def __init__(self, converter=None, **kwargs):
-        if 'decoder' not in kwargs:
-            kwargs['decoder'] = DistanceDecoder(alignment)
-        super().__init__(**kwargs)
+    def __init__(self, converter=None, decoder=None, **kwargs):
+        decoder = decoder or DistanceDecoder(alignment)
+        super().__init__(decoder=decoder, **kwargs)
         self.converter = converter
 
     def create_converter(self, *args, **kwargs):
