@@ -206,7 +206,6 @@ class ComparativeEncoder(Model):
         """
         if not os.path.exists(os.path.join(path, 'encoder')):
             raise ValueError('Encoder save file is necessary for loading a model!')
-        tf.keras.backend.clear_session()
         custom_objects = {'correlation_coefficient_loss': cls.correlation_coefficient_loss}
         strategy = strategy or tf.distribute.get_strategy()
         with strategy.scope():
@@ -241,7 +240,6 @@ class DistanceDecoder(Model):
         """
         Create a simple decoder.
         """
-        tf.keras.backend.clear_session()
         strategy = self.strategy if hasattr(self, 'strategy') else tf.distribute.get_strategy()
         with strategy.scope():
             dec_input = tf.keras.layers.Input((1,))
@@ -313,7 +311,6 @@ class DistanceDecoder(Model):
         if not os.path.exists(os.path.join(path, 'decoder')):
             raise ValueError('Decoder save file is necessary for loading a model!')
         strategy = strategy or tf.distribute.get_strategy()
-        tf.keras.backend.clear_session()
         with strategy.scope():
             model = tf.keras.models.load_model(os.path.join(path, 'decoder'))
 

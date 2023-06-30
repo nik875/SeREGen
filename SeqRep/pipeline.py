@@ -4,7 +4,6 @@ Automated pipelines for sequence representation generation.
 import os
 import shutil
 import pickle
-import json
 import multiprocessing as mp
 
 from tqdm import tqdm
@@ -131,15 +130,17 @@ class Pipeline:
         contents = os.listdir(savedir)
         kwargs = cls._load_special(savedir)
         if 'model' in contents:
+            decoder = DistanceDecoder.load(os.path.join(savedir, 'model'), quiet=quiet)
             model = ComparativeEncoder.load(os.path.join(savedir, 'model'), strategy=strategy,
                                             quiet=quiet)
         else:
-            print('Warning: model missing!')
-            model = None
+            print('Warning: models missing!')
+            model, decoder = None, None
         preproc_reprs = np.load(os.path.join(savedir, 'preproc_reprs.npy')) if 'preproc_reprs.npy' \
             in contents else None
         reprs = np.load(os.path.join(savedir, 'reprs.npy')) if 'reprs.npy' in contents else None
-        return cls(model=model, preproc_reprs=preproc_reprs, reprs=reprs, quiet=quiet, **kwargs)
+        return cls(model=model, decoder=decoder, preproc_reprs=preproc_reprs, reprs=reprs,
+                   quiet=quiet, **kwargs)
 
     @staticmethod
     def _load_special(savedir: str) -> dict:
