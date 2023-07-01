@@ -41,13 +41,13 @@ class ComparativeModel:
     """
     def __init__(self, v_scope='model', dist=None, model=None, strategy=None,
                  history=None, quiet=False, properties=None):
-        strategy = strategy or tf.distribute.get_strategy()
+        self.strategy = strategy or tf.distribute.get_strategy()
         self.distance = dist or Distance()
         self.quiet = quiet
         self.properties = {} if properties is None else properties
         self.history = history or {}
         with tf.name_scope(v_scope):
-            with strategy.scope():
+            with self.strategy.scope():
                 self.model = model or self.create_model()
 
     def create_model(self):
@@ -264,8 +264,10 @@ class ComparativeEncoder(ComparativeModel):
         custom_objects = {'correlation_coefficient_loss': cls.correlation_coefficient_loss}
         with tf.keras.utils.custom_object_scope(custom_objects):
             obj = super().load(path, v_scope, **kwargs)
-            obj.encoder = obj.model
-            obj.model = obj.create_model()
+        obj.encoder = obj.model
+        with tf.name_scope(v_scope):
+            with obj.strategy.scope():
+                obj.model = obj.create_model()
         return obj
 
     def summary(self):
