@@ -3,6 +3,7 @@ ComparativeEncoder module, trains a model comparatively using distances.
 """
 import os
 import pickle
+import json
 import time
 import multiprocessing as mp
 
@@ -39,12 +40,12 @@ class ComparativeModel:
     Abstract ComparativeModel class. Stores some useful common functions.
     """
     def __init__(self, v_scope: str, dist=None, model=None, strategy=None,
-                 quiet=False, properties=None):
+                 history=None, quiet=False, properties=None):
         strategy = strategy or tf.distribute.get_strategy()
         self.distance = dist or Distance()
         self.quiet = quiet
         self.properties = {} if properties is None else properties
-        self.history = {}
+        self.history = history or {}
         with tf.name_scope(v_scope):
             with strategy.scope():
                 self.model = model or self.create_model()
@@ -94,6 +95,44 @@ class ComparativeModel:
                 print('Stopping early due to lack of improvement!')
                 break
         return self.history
+
+    def save(self, path: str, model=None):
+        """
+        Save the model to the given path.
+        @param path: path to save to.
+        """
+        os.makedirs(path)
+        model = model or self.model
+        model.save(os.path.join(path, 'model'))
+        with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
+            pickle.dump(self.distance, f)
+        if self.history:
+            with open(os.path.join(path, 'history.json'), 'w') as f:
+                json.dump(self.history, f)
+
+    @classmethod
+    def load(cls, path: str, v_scope: str, strategy=None, **kwargs):
+        """
+        Load the model from the filesystem.
+        """
+        if not os.path.exists(os.path.join(path, 'model')):
+            raise ValueError('Model save file is necessary for loading a ComparativeModel!')
+        contents = os.listdir(path)
+        strategy = strategy or tf.distribute.get_strategy()
+        with tf.name_scope(v_scope):
+            with strategy.scope():
+                model = tf.keras.models.load_model(os.path.join(path, 'model'))
+
+        if 'distance.pkl' not in contents:
+            print('Warning: distance save file missing!')
+            dist = None
+        else:
+            with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
+                dist = pickle.load(f)
+        if 'history.json' in contents:
+            with open(os.path.join(path, 'history.json'), 'r') as f:
+                history = json.load(f)
+        return cls(v_scope, dist=dist, model=model, strategy=strategy, history=history, **kwargs)
 
 
 class ComparativeEncoder(ComparativeModel):
@@ -216,40 +255,16 @@ class ComparativeEncoder(ComparativeModel):
         return self.encoder.predict(dataset, batch_size=batch_size)
 
     def save(self, path: str):
-        """
-        Save the encoder model to the given path.
-        @param path: path to save to.
-        """
-        os.makedirs(path)
-        self.encoder.save(os.path.join(path, 'encoder'))
-        with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
-            pickle.dump(self.distance, f)
+        super().save(path, model=self.encoder)
 
     @classmethod
-    def load(cls, path: str, strategy=None, v_scope='encoder', **kwargs):
-        """
-        Load an encoder model and create a new ComparativeEncoder.
-        @param path: path where model is saved.
-        @param dist: distance metric to use for new ComparativeEncoder.
-        @return: ComparativeEncoder object
-        """
-        if not os.path.exists(os.path.join(path, 'encoder')):
-            raise ValueError('Encoder save file is necessary for loading a model!')
+    def load(cls, path: str, v_scope='encoder', **kwargs):
         custom_objects = {'correlation_coefficient_loss': cls.correlation_coefficient_loss}
-        strategy = strategy or tf.distribute.get_strategy()
-        with tf.name_scope(v_scope):
-            with strategy.scope():
-                with tf.keras.utils.custom_object_scope(custom_objects):
-                    encoder = tf.keras.models.load_model(os.path.join(path, 'encoder'))
-
-        if not os.path.exists(os.path.join(path, 'distance.pkl')):
-            print('Warning: distance save file missing! Inferencing is possible, but training and '
-                  'decoder evaluation is not!')
-            dist = None
-        else:
-            with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
-                dist = pickle.load(f)
-        return cls(encoder, dist=dist, strategy=strategy, **kwargs)
+        with tf.keras.utils.custom_object_scope(custom_objects):
+            obj = super().load(path, v_scope, **kwargs)
+            obj.encoder = obj.model
+            obj.model = obj.create_model()
+        return obj
 
     def summary(self):
         """
@@ -317,43 +332,13 @@ class DistanceDecoder(ComparativeModel):
         dataset = dataset.with_options(options)
         return self.model.predict(dataset)
 
-    def save(self, path: str):
-        """
-        Save the decoder model to the given path.
-        @param path: path to save to.
-        """
-        os.makedirs(path)
-        self.model.save(os.path.join(path, 'decoder'))
-        with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
-            pickle.dump(self.distance, f)
-
-    @classmethod
-    def load(cls, path: str, strategy=None, v_scope='decoder', **kwargs):
-        """
-        Load an decoder model and create a new DistanceDecoder.
-        @param path: path where model is saved.
-        @param dist: distance metric to use for new DistanceDecoder.
-        @return: DistanceDecoder object
-        """
-        if not os.path.exists(os.path.join(path, 'decoder')):
-            raise ValueError('Decoder save file is necessary for loading a model!')
-        strategy = strategy or tf.distribute.get_strategy()
-        with tf.name_scope(v_scope):
-            with strategy.scope():
-                model = tf.keras.models.load_model(os.path.join(path, 'decoder'))
-
-        if not os.path.exists(os.path.join(path, 'distance.pkl')):
-            print('Warning: distance save file missing! Inferencing is possible, but training and '
-                  'evaluation is not!')
-            dist = None
-        else:
-            with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
-                dist = pickle.load(f)
-        return cls(model=model, dist=dist, strategy=strategy, v_scope=v_scope, **kwargs)
-
     def summary(self):
         """
         Prints a summary of the decoder.
         """
         self.model.summary()
+
+    @classmethod
+    def load(cls, path: str, v_scope='decoder', **kwargs):
+        return super().load(path, v_scope, **kwargs)
 

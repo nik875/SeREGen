@@ -10,6 +10,7 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import matplotlib.pyplot as plt
 import scipy.stats as st
 from scipy.spatial.distance import euclidean
 from sklearn.neighbors import BallTree
@@ -102,11 +103,21 @@ class Pipeline:
         if not self.quiet:
             print('Transforming dataset...')
         self.transform_dataset(transform_batch_size)
-        self.decoder.fit(self.reprs, distance_on, epochs=10, **kwargs)
+        self.decoder.fit(self.reprs, distance_on, epochs=25, **kwargs)
 
     def _fit_called_check(self):
         if self.preproc_reprs is None:
             raise ValueError('Fit must be called before transform!')
+
+    def plot_loss_history(self, savepath=None):
+        """
+        Plot the loss history of the trained model.
+        """
+        data = self.model.history['loss']
+        plt.plot(data)
+        if savepath:
+            plt.savefig(savepath)
+        plt.show()
 
     def transform(self, seqs: list, batch_size: int) -> list:
         """
@@ -133,10 +144,11 @@ class Pipeline:
         """
         shutil.rmtree(savedir, ignore_errors=True)
         os.makedirs(savedir)
+        models_path = os.path.join(savedir, 'models')
         if self.model is not None:
-            self.model.save(os.path.join(savedir, 'model'))
-        with open(os.path.join(savedir, 'distance.pkl'), 'wb') as f:
-            pickle.dump(self.model.distance, f)
+            self.model.save(os.path.join(models_path, 'encoder'))
+        if self.decoder is not None:
+            self.decoder.save(os.path.join(models_path, 'decoder'))
         if self.preproc_reprs is not None:
             np.save(os.path.join(savedir, 'preproc_reprs.npy'), self.preproc_reprs)
         if self.reprs is not None:
@@ -151,15 +163,16 @@ class Pipeline:
             raise ValueError("Directory doesn't exist!")
         contents = os.listdir(savedir)
         kwargs = cls._load_special(savedir)
-        if 'model' in contents:
-            thisdir = os.path.join(savedir, 'model')
+        if 'models' in contents:
+            thisdir = os.path.join(savedir, 'models')
             if os.path.exists(os.path.join(thisdir, 'encoder')):
-                model = ComparativeEncoder.load(thisdir, strategy=strategy, quiet=quiet)
+                model = ComparativeEncoder.load(os.path.join(thisdir, 'encoder'), strategy=strategy,
+                                                quiet=quiet)
             else:
                 print('Warning: encoder missing!')
                 model = None
             if os.path.exists(os.path.join(thisdir, 'decoder')):
-                decoder = DistanceDecoder.load(thisdir, quiet=quiet)
+                decoder = DistanceDecoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
             else:
                 print('Warning: decoder missing!')
                 decoder = None
