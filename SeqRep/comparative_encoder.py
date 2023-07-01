@@ -263,13 +263,7 @@ class ComparativeEncoder(ComparativeModel):
     def load(cls, path: str, v_scope='encoder', **kwargs):
         custom_objects = {'correlation_coefficient_loss': cls.correlation_coefficient_loss}
         with tf.keras.utils.custom_object_scope(custom_objects):
-            obj = super().load(path, v_scope, **kwargs)
-        obj.model.summary()
-        obj.encoder = obj.model
-        with tf.name_scope(v_scope):
-            with obj.strategy.scope():
-                obj.model = obj.create_model()
-        return obj
+            return super().load(path, v_scope, **kwargs)
 
     def summary(self):
         """
