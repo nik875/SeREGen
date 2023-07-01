@@ -70,7 +70,7 @@ class ComparativeModel:
         return {}
 
     @_run_tf_fn(print_time=True)
-    def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=1, **kwargs):
+    def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=3, **kwargs):
         """
         Train the model based on the given parameters. Extra arguments are passed to train_step.
         @param epochs: epochs to train for.
@@ -235,9 +235,9 @@ class ComparativeEncoder(ComparativeModel):
 
         return self.model.fit(train_data, epochs=1).history
 
-    def fit(self, *args, distance_on=None, patience=3, **kwargs):
+    def fit(self, *args, distance_on=None, **kwargs):
         distance_on = distance_on if distance_on is not None else args[0]
-        super().fit(*args, distance_on, patience=patience, **kwargs)
+        super().fit(*args, distance_on, **kwargs)
 
     @_run_tf_fn()
     def transform(self, data: np.ndarray, batch_size: int) -> np.ndarray:
