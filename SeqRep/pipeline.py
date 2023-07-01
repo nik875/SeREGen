@@ -235,7 +235,7 @@ class Pipeline:
         query_enc = self.transform([query], 1)
         dists, ind = self.index.query(query_enc, k=n_neighbors)
         matches = [self.dataset.iloc[i] for i in ind[0]]
-        return self.decoder.transform(dists[0]), matches
+        return self.decoder.transform(dists[0]).flatten(), matches
 
     def evaluate(self, sample_size=None, jobs=1, chunksize=1):
         """

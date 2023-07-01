@@ -1,12 +1,14 @@
+"""
+Visualization of sequence representations.
+"""
 import typing
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-from scipy import stats, spatial
 from .dataset_builder import Dataset
 
 
-def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='.', figsize=(8, 6), savepath=None):
+def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='.', figsize=(8, 6),
+                     savepath=None):
     """
     Create a simple scatterplot of sequence representations.
     Suggested alpha for SILVA dataset representations: .05
@@ -54,6 +56,7 @@ def reprs_by_label(reprs: np.ndarray, ds: Dataset, label: typing.Union[str, int]
     plottable_taxa = unique_taxa if not filter else unique_taxa[counts > filter]
     plottable = np.isin(tax[:, label_idx], plottable_taxa)
     to_plot = np.zeros((np.nonzero(plottable)[0].shape[0], plottable_taxa.shape[0]))
+    # pylint: disable=consider-using-enumerate
     for i in range(len(plottable_taxa)):
         to_plot[tax[plottable][:, label_idx] == plottable_taxa[i], i] = 1
     plottable_seqs = reprs[plottable]
