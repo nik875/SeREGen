@@ -39,7 +39,7 @@ class ComparativeModel:
     """
     Abstract ComparativeModel class. Stores some useful common functions.
     """
-    def __init__(self, v_scope: str, dist=None, model=None, strategy=None,
+    def __init__(self, v_scope='model', dist=None, model=None, strategy=None,
                  history=None, quiet=False, properties=None):
         strategy = strategy or tf.distribute.get_strategy()
         self.distance = dist or Distance()
@@ -133,25 +133,26 @@ class ComparativeModel:
         if 'history.json' in contents:
             with open(os.path.join(path, 'history.json'), 'r') as f:
                 history = json.load(f)
-        return cls(v_scope, dist=dist, model=model, strategy=strategy, history=history, **kwargs)
+        return cls(v_scope=v_scope, dist=dist, model=model, strategy=strategy, history=history,
+                   **kwargs)
 
 
 class ComparativeEncoder(ComparativeModel):
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, encoder: tf.keras.Model, v_scope='encoder', **kwargs):
+    def __init__(self, model: tf.keras.Model, v_scope='encoder', **kwargs):
         """
         @param encoder: TensorFlow model that must support .train() and .predict() at minimum.
         @param dist: distance metric to use when comparing two sequences.
         """
         properties = {
-            'input_shape': encoder.layers[0].output_shape[0][1:],
-            'input_dtype': encoder.layers[0].dtype,
-            'repr_size': encoder.layers[-1].output_shape[1:],
-            'depth': len(encoder.layers),
+            'input_shape': model.layers[0].output_shape[0][1:],
+            'input_dtype': model.layers[0].dtype,
+            'repr_size': model.layers[-1].output_shape[1:],
+            'depth': len(model.layers),
         }
-        self.encoder = encoder
+        self.encoder = model
         super().__init__(v_scope, properties=properties, **kwargs)
 
     def create_model(self):
