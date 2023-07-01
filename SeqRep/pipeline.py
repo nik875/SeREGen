@@ -109,11 +109,11 @@ class Pipeline:
         if self.preproc_reprs is None:
             raise ValueError('Fit must be called before transform!')
 
-    def plot_loss_history(self, savepath=None):
+    def plot_training_history(self, savepath=None):
         """
-        Plot the loss history of the trained model.
+        Plot the training history of the trained model. Converts 1 - r loss into r^2.
         """
-        data = self.model.history['loss']
+        data = (1 - np.array(self.model.history['loss'])) ** 2
         plt.plot(data)
         if savepath:
             plt.savefig(savepath)
