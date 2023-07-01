@@ -129,6 +129,7 @@ class ComparativeModel:
         else:
             with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
                 dist = pickle.load(f)
+        history = None
         if 'history.json' in contents:
             with open(os.path.join(path, 'history.json'), 'r') as f:
                 history = json.load(f)
