@@ -9,6 +9,7 @@ import multiprocessing as mp
 
 import numpy as np
 from scipy.spatial.distance import euclidean
+from sklearn.linear_model import LinearRegression
 import tensorflow as tf
 from keras import backend as K
 from tqdm import tqdm
@@ -272,27 +273,17 @@ class ComparativeEncoder(ComparativeModel):
         self.encoder.summary()
 
 
-class DistanceDecoder(ComparativeModel):
+class Decoder(ComparativeModel):
     """
-    Decoder model to convert generated distances into true distances.
+    Abstract Decoder for encoding distances.
     """
     def __init__(self, v_scope='decoder', **kwargs):
         super().__init__(v_scope, **kwargs)
 
-    def create_model(self):
-        dec_input = tf.keras.layers.Input((1,))
-        x = tf.keras.layers.Dense(100, activation='relu')(dec_input)
-        x = tf.keras.layers.Dense(100, activation='relu')(x)
-        x = tf.keras.layers.Dropout(rate=.1)(x)
-        x = tf.keras.layers.Dense(100, activation='relu')(x)
-        x = tf.keras.layers.Dense(1, activation='relu')(x)
-        decoder = tf.keras.Model(inputs=dec_input, outputs=x)
-        decoder.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError())
-        return decoder
-
-    # pylint: disable=arguments-differ
-    def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, batch_size=1000, jobs=1,
-                   chunksize=1):
+    def random_set(self, encodings: np.ndarray, distance_on: np.ndarray, jobs=1, chunksize=1):
+        """
+        Create a random set of distance data from the inputs.
+        """
         rng = np.random.default_rng()
         p1 = rng.permutation(distance_on.shape[0])
         y1 = distance_on[p1]
@@ -307,7 +298,72 @@ class DistanceDecoder(ComparativeModel):
         # dataset because of normalization.
         x1, x2 = encodings[p1], encodings[p2]
         x = np.fromiter((euclidean(x1[i], x2[i]) for i in range(len(y))), dtype=np.float64)
+        return x, y
 
+    # pylint: disable=arguments-differ
+    @staticmethod
+    def load(path: str, v_scope='decoder', **kwargs):
+        contents = os.listdir(path)
+        if 'obj.pkl' in contents:
+            return LinearDecoder.load(path)
+        return DenseDecoder.load(path, **kwargs)
+
+
+class LinearDecoder(Decoder):
+    """
+    Linear model of a decoder. Far more efficient and useful in cases where ComparativeEncoder
+    achives very low loss values.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.m, self.b = 1, 0
+
+    def create_model(self):
+        return LinearRegression()
+
+    # pylint: disable=arguments-differ
+    def fit(self, encodings: np.ndarray, distance_on: np.ndarray, jobs=1, chunksize=1):
+        """
+        Fit the LinearDecoder to the given data.
+        """
+        x, y = self.random_set(encodings, distance_on, jobs=jobs, chunksize=chunksize)
+        self.model.fit(x, y)
+
+    def transform(self, data: np.ndarray):
+        """
+        Transform the given data.
+        """
+        return self.model.predict(data)
+
+    def save(self, path: str):
+        with open(os.path.join(path, 'obj.pkl'), 'wb') as f:
+            pickle.dump(self, f)
+
+    @staticmethod
+    def load(path: str):
+        with open(os.path.join(path, 'obj.pkl'), 'rb') as f:
+            return pickle.load(f)
+
+
+class DenseDecoder(Decoder):
+    """
+    Decoder model to convert generated distances into true distances.
+    """
+    def create_model(self):
+        dec_input = tf.keras.layers.Input((1,))
+        x = tf.keras.layers.Dense(100, activation='relu')(dec_input)
+        x = tf.keras.layers.Dense(100, activation='relu')(x)
+        x = tf.keras.layers.Dropout(rate=.1)(x)
+        x = tf.keras.layers.Dense(100, activation='relu')(x)
+        x = tf.keras.layers.Dense(1, activation='relu')(x)
+        decoder = tf.keras.Model(inputs=dec_input, outputs=x)
+        decoder.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError())
+        return decoder
+
+    # pylint: disable=arguments-differ
+    def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, batch_size=1000, jobs=1,
+                   chunksize=1):
+        x, y = self.random_set(encodings, distance_on, jobs=jobs, chunksize=chunksize)
         train_data = tf.data.Dataset.from_tensor_slices((x, y))
         train_data = train_data.batch(batch_size)
 
@@ -339,5 +395,5 @@ class DistanceDecoder(ComparativeModel):
 
     @classmethod
     def load(cls, path: str, v_scope='decoder', **kwargs):
-        return super().load(path, v_scope, **kwargs)
+        return super(Decoder, cls()).load(path, v_scope, **kwargs)
 

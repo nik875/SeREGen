@@ -21,7 +21,7 @@ from .visualize import repr_scatterplot
 from .kmers import KMerCounter, Nucleotide_AA
 from .compression import PCA, IPCA, AE, Compressor
 from .encoders import ModelBuilder
-from .comparative_encoder import ComparativeEncoder, DistanceDecoder
+from .comparative_encoder import ComparativeEncoder, Decoder, DenseDecoder, LinearDecoder
 from .distance import cosine, IncrementalDistance, alignment
 
 
@@ -172,7 +172,7 @@ class Pipeline:
                 print('Warning: encoder missing!')
                 model = None
             if os.path.exists(os.path.join(thisdir, 'decoder')):
-                decoder = DistanceDecoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
+                decoder = Decoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
             else:
                 print('Warning: decoder missing!')
                 decoder = None
@@ -278,7 +278,11 @@ class KMerCountsPipeline(Pipeline):
     Automated pipeline using KMer Counts. Optionally compresses input data before training model.
     """
     def __init__(self, counter=None, compressor=None, decoder=None, **kwargs):
-        decoder = decoder or DistanceDecoder(dist=cosine)
+        if isinstance(decoder, str):
+            decoder = DenseDecoder(dist=cosine) if decoder == 'dense' else \
+                LinearDecoder(dist=cosine)
+        else:
+            decoder = decoder or LinearDecoder(dist=cosine)
         super().__init__(decoder=decoder, **kwargs)
         self.counter = counter
         self.K_ = self.counter.k if self.counter else None
@@ -397,7 +401,6 @@ class HomologousSequencePipeline(Pipeline):
     VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
 
     def __init__(self, converter=None, decoder=None, **kwargs):
-        decoder = decoder or DistanceDecoder(dist=alignment)
         super().__init__(decoder=decoder, **kwargs)
         self.converter = converter
 
