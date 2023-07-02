@@ -332,6 +332,7 @@ class LinearDecoder(Decoder):
         return self.model.predict(data)
 
     def save(self, path: str):
+        os.makedirs(path)
         with open(os.path.join(path, 'obj.pkl'), 'wb') as f:
             pickle.dump(self, f)
 
