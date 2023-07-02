@@ -95,7 +95,6 @@ class Pipeline:
             print('Preprocessing dataset...')
         self.preproc_reprs = self.preprocess_seqs(self.dataset['seqs'].to_numpy(), **kwargs)
 
-    # Should be overridden to automatically select distance_on
     def fit_decoder(self, distance_on: np.ndarray, transform_batch_size: int, **kwargs):
         """
         Fit the decoder based on the model's representations.
