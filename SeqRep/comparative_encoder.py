@@ -310,13 +310,20 @@ class Decoder(ComparativeModel):
         return DenseDecoder.load(path, **kwargs)
 
 
+class _LinearRegressionModel(LinearRegression):
+    # pylint: disable=missing-class-docstring,missing-function-docstring
+    def save(self, path: str):
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+
+
 class LinearDecoder(Decoder):
     """
     Linear model of a decoder. Far more efficient and useful in cases where ComparativeEncoder
     achives very low loss values.
     """
     def create_model(self):
-        return LinearRegression()
+        return _LinearRegressionModel()
 
     # pylint: disable=arguments-differ
     def fit(self, encodings: np.ndarray, distance_on: np.ndarray, jobs=1, chunksize=1):
@@ -332,16 +339,11 @@ class LinearDecoder(Decoder):
         """
         return self.model.predict(data)
 
-    def save(self, path: str):
-        os.makedirs(path)
-        with open(os.path.join(path, 'model.pkl'), 'wb') as f:
-            pickle.dump(self.model, f)
-
     @classmethod
-    def load(cls, path: str):
+    def load(cls, path: str, **kwargs):
         with open(os.path.join(path, 'model.pkl'), 'rb') as f:
             model = pickle.load(f)
-        return cls(model=model)
+        return super(Decoder, cls()).load(path, 'decoder', model=model, **kwargs)
 
 
 class DenseDecoder(Decoder):
