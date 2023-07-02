@@ -326,7 +326,8 @@ class LinearDecoder(Decoder):
         return _LinearRegressionModel()
 
     # pylint: disable=arguments-differ
-    def fit(self, encodings: np.ndarray, distance_on: np.ndarray, jobs=1, chunksize=1):
+    def fit(self, encodings: np.ndarray, distance_on: np.ndarray, *args, jobs=1, chunksize=1,
+            **kwargs):
         """
         Fit the LinearDecoder to the given data.
         """
@@ -337,7 +338,7 @@ class LinearDecoder(Decoder):
         """
         Transform the given data.
         """
-        return self.model.predict(data)
+        return self.model.predict(data.reshape(-1, 1))
 
     @classmethod
     def load(cls, path: str, **kwargs):
