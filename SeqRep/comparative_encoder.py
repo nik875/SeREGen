@@ -314,10 +314,6 @@ class LinearDecoder(Decoder):
     Linear model of a decoder. Far more efficient and useful in cases where ComparativeEncoder
     achives very low loss values.
     """
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.m, self.b = 1, 0
-
     def create_model(self):
         return LinearRegression()
 
@@ -327,7 +323,7 @@ class LinearDecoder(Decoder):
         Fit the LinearDecoder to the given data.
         """
         x, y = self.random_set(encodings, distance_on, jobs=jobs, chunksize=chunksize)
-        self.model.fit(x, y)
+        self.model.fit(x.reshape((-1, 1)), y)
 
     def transform(self, data: np.ndarray):
         """
