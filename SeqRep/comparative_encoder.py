@@ -112,17 +112,18 @@ class ComparativeModel:
                 json.dump(self.history, f)
 
     @classmethod
-    def load(cls, path: str, v_scope: str, strategy=None, **kwargs):
+    def load(cls, path: str, v_scope: str, strategy=None, model=None, **kwargs):
         """
         Load the model from the filesystem.
         """
-        if not os.path.exists(os.path.join(path, 'model')):
-            raise ValueError('Model save file is necessary for loading a ComparativeModel!')
-        contents = os.listdir(path)
-        strategy = strategy or tf.distribute.get_strategy()
-        with tf.name_scope(v_scope):
-            with strategy.scope():
-                model = tf.keras.models.load_model(os.path.join(path, 'model'))
+        if not model:
+            if not os.path.exists(os.path.join(path, 'model')):
+                raise ValueError('Model save file is necessary for loading a ComparativeModel!')
+            contents = os.listdir(path)
+            strategy = strategy or tf.distribute.get_strategy()
+            with tf.name_scope(v_scope):
+                with strategy.scope():
+                    model = tf.keras.models.load_model(os.path.join(path, 'model'))
 
         if 'distance.pkl' not in contents:
             print('Warning: distance save file missing!')
@@ -304,7 +305,7 @@ class Decoder(ComparativeModel):
     @staticmethod
     def load(path: str, v_scope='decoder', **kwargs):
         contents = os.listdir(path)
-        if 'obj.pkl' in contents:
+        if 'model.pkl' in contents:
             return LinearDecoder.load(path)
         return DenseDecoder.load(path, **kwargs)
 
@@ -333,13 +334,14 @@ class LinearDecoder(Decoder):
 
     def save(self, path: str):
         os.makedirs(path)
-        with open(os.path.join(path, 'obj.pkl'), 'wb') as f:
-            pickle.dump(self, f)
+        with open(os.path.join(path, 'model.pkl'), 'wb') as f:
+            pickle.dump(self.model, f)
 
-    @staticmethod
-    def load(path: str):
-        with open(os.path.join(path, 'obj.pkl'), 'rb') as f:
-            return pickle.load(f)
+    @classmethod
+    def load(cls, path: str):
+        with open(os.path.join(path, 'model.pkl'), 'rb') as f:
+            model = pickle.load(f)
+        return cls(model=model)
 
 
 class DenseDecoder(Decoder):
