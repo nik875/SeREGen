@@ -83,7 +83,7 @@ class _Alignment(Distance):
         @param pair: tuple of two strings
         @return int: normalized alignment distance
         """
-        return pairwise2.align.localxx(*pair, score_only=True) / max(map(len, pair))
+        return pairwise2.align.localxx(*pair, score_only=True) / min(map(len, pair))
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
         """
