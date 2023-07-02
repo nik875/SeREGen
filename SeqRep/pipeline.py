@@ -548,9 +548,8 @@ class HomologousSequencePipeline(Pipeline):
     def _load_special(savedir: str):
         result = {}
         contents = os.listdir(savedir)
-        if 'converter.pkl' not in contents:
-            raise ValueError('converter is necessary!')
-        with open(os.path.join(savedir, 'converter.pkl'), 'rb') as f:
-            result['converter'] = pickle.load(f)
+        if 'converter.pkl' in contents:
+            with open(os.path.join(savedir, 'converter.pkl'), 'rb') as f:
+                result['converter'] = pickle.load(f)
         return result
 
