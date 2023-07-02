@@ -313,7 +313,7 @@ class Decoder(ComparativeModel):
 class _LinearRegressionModel(LinearRegression):
     # pylint: disable=missing-class-docstring,missing-function-docstring
     def save(self, path: str):
-        with open(path, 'wb') as f:
+        with open(path + '.pkl', 'wb') as f:
             pickle.dump(self, f)
 
 
