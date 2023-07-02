@@ -116,10 +116,10 @@ class ComparativeModel:
         """
         Load the model from the filesystem.
         """
+        contents = os.listdir(path)
         if not model:
-            if not os.path.exists(os.path.join(path, 'model')):
+            if 'model' not in contents:
                 raise ValueError('Model save file is necessary for loading a ComparativeModel!')
-            contents = os.listdir(path)
             strategy = strategy or tf.distribute.get_strategy()
             with tf.name_scope(v_scope):
                 with strategy.scope():
