@@ -104,8 +104,11 @@ class Pipeline:
         """
         Plot the training history of the trained model. Converts 1 - r loss into r^2.
         """
-        data = (1 - np.array(self.model.history['loss'])) ** 2
-        plt.plot(data)
+        data = self.model.history['loss']
+        plt.plot(np.arange(len(data)), data)
+        plt.title('ComparativeEncoder Training Loss History')
+        plt.xlabel('Epoch')
+        plt.ylabel('Model Loss')
         if savepath:
             plt.savefig(savepath)
         plt.show()
