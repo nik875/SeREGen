@@ -29,9 +29,13 @@ class Pipeline:
     """
     An abstract automated pipeline for sequence representation generation.
     """
-    def __init__(self, model=None, decoder=None, dataset=None, preproc_reprs=None, reprs=None,
+    AVAILABLE_DECODERS = {
+        'dense': DenseDecoder,
+        'linear': LinearDecoder
+    }
+    def __init__(self, model=None, decoder='linear', dataset=None, preproc_reprs=None, reprs=None,
                  quiet=False):
-        self.model, self.decoder = model, decoder
+        self.model, self.decoder = model, self.AVAILABLE_DECODERS[decoder]
         self.dataset, self.preproc_reprs, self.reprs = dataset, preproc_reprs, reprs
         self.quiet = quiet
         self.index = None
@@ -272,13 +276,8 @@ class KMerCountsPipeline(Pipeline):
     """
     Automated pipeline using KMer Counts. Optionally compresses input data before training model.
     """
-    def __init__(self, counter=None, compressor=None, decoder=None, **kwargs):
-        if isinstance(decoder, str):
-            decoder = DenseDecoder(dist=cosine) if decoder == 'dense' else \
-                LinearDecoder(dist=cosine)
-        else:
-            decoder = decoder or LinearDecoder(dist=cosine)
-        super().__init__(decoder=decoder, **kwargs)
+    def __init__(self, counter=None, compressor=None, **kwargs):
+        super().__init__(**kwargs)
         self.counter = counter
         self.K_ = self.counter.k if self.counter else None
         self.repr_size_ = self.model.properties['repr_size'] if self.model else None
@@ -392,8 +391,8 @@ class HomologousSequencePipeline(Pipeline):
     """
     VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
 
-    def __init__(self, converter=None, decoder=None, **kwargs):
-        super().__init__(decoder=decoder, **kwargs)
+    def __init__(self, converter=None, **kwargs):
+        super().__init__(**kwargs)
         self.converter = converter
 
     def create_converter(self, *args, **kwargs):
