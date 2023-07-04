@@ -41,7 +41,7 @@ class ComparativeModel:
     Abstract ComparativeModel class. Stores some useful common functions.
     """
     def __init__(self, v_scope='model', dist=None, model=None, strategy=None,
-                 history=None, quiet=False, properties=None):
+                 history=None, quiet=False, properties=None, **kwargs):
         self.strategy = strategy or tf.distribute.get_strategy()
         self.distance = dist or Distance()
         self.quiet = quiet
@@ -49,7 +49,7 @@ class ComparativeModel:
         self.history = history or {}
         with tf.name_scope(v_scope):
             with self.strategy.scope():
-                self.model = model or self.create_model()
+                self.model = model or self.create_model(**kwargs)
 
     def create_model(self):
         """
@@ -157,7 +157,7 @@ class ComparativeEncoder(ComparativeModel):
         self.encoder = model
         super().__init__(v_scope, properties=properties, **kwargs)
 
-    def create_model(self):
+    def create_model(self, loss='corr_coef'):
         inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
                                        dtype=self.properties['input_dtype'])
         inputb = tf.keras.layers.Input(self.properties['input_shape'], name='input_b',
@@ -166,8 +166,10 @@ class ComparativeEncoder(ComparativeModel):
             self.encoder(inputa),
             self.encoder(inputb),
         )
+        loss_kwargs = {'loss': 'mse', 'metrics': ['mae']} if loss == 'mse' else \
+            {'loss': self.correlation_coefficient_loss}
         comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
-        comparative_model.compile(optimizer='adam', loss='mse')
+        comparative_model.compile(optimizer='adam', **loss_kwargs)
         return comparative_model
 
     @classmethod

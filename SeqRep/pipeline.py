@@ -478,7 +478,7 @@ class HomologousSequencePipeline(Pipeline):
         builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
         model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
-                                                      repr_size=repr_size)
+                                                      repr_size=repr_size, loss='mse')
         return model
 
     @classmethod
@@ -496,7 +496,7 @@ class HomologousSequencePipeline(Pipeline):
         builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
         model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
-                                                      repr_size=repr_size)
+                                                      repr_size=repr_size, loss='mse')
         return model
 
     def preprocess_seqs(self, seqs: list[str]):
