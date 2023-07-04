@@ -41,6 +41,13 @@ class Pipeline:
         self.quiet = quiet
         self.index = None
 
+    def set_decoder(self, decoder, **kwargs):
+        """
+        Manually set the decoder.
+        """
+        self.decoder = decoder if isinstance(decoder, Decoder) else \
+            self.AVAILABLE_DECODERS[decoder](**kwargs)
+
     def load_dataset(self, paths: list[str], header_parser='None', trim_to=0):
         """
         Load a dataset into memory from a list of FASTA files.
@@ -146,7 +153,8 @@ class Pipeline:
         models_path = os.path.join(savedir, 'models')
         if self.model is not None:
             self.model.save(os.path.join(models_path, 'encoder'))
-        if self.decoder is not None:
+        # pylint: disable=unidiomatic-typecheck
+        if self.decoder is not None and not type(self.decoder) == Decoder:
             self.decoder.save(os.path.join(models_path, 'decoder'))
         if self.preproc_reprs is not None:
             np.save(os.path.join(savedir, 'preproc_reprs.npy'), self.preproc_reprs)
@@ -172,8 +180,6 @@ class Pipeline:
                 print('Warning: encoder missing!')
             if os.path.exists(os.path.join(thisdir, 'decoder')):
                 kwargs['decoder'] = Decoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
-            else:
-                print('Warning: decoder missing!')
         else:
             print('Warning: models missing!')
         if 'preproc_reprs' in contents:
