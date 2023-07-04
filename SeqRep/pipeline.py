@@ -76,7 +76,7 @@ class Pipeline:
     # Must be implemented by subclass, super method must be called by implementation.
     # This super method preprocesses the dataset into self.preproc_reprs.
     # This variable is used to determine whether fit was called and to avoid preprocessing the
-    # dataset twice between fit and transform_dataset.
+    # dataset twice between fit and transform_dataset. Returns indices of unique sequences.
     def fit(self, **kwargs):
         """
         Fit the model to the dataset.

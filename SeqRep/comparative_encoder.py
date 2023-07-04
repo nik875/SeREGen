@@ -167,7 +167,7 @@ class ComparativeEncoder(ComparativeModel):
             self.encoder(inputb),
         )
         comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
-        comparative_model.compile(optimizer='adam', loss=self.correlation_coefficient_loss)
+        comparative_model.compile(optimizer='adam', loss='mse')
         return comparative_model
 
     @classmethod
