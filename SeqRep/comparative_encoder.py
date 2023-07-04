@@ -97,6 +97,12 @@ class ComparativeModel:
                 break
         return self.history
 
+    def transform(self, data: np.ndarray):
+        """
+        Transform the given data.
+        """
+        return data
+
     def save(self, path: str, model=None):
         """
         Save the model to the given path.
@@ -303,6 +309,9 @@ class Decoder(ComparativeModel):
         x = np.fromiter((euclidean(x1[i], x2[i]) for i in range(len(y))), dtype=np.float64)
         return x, y
 
+    def fit(self, *args, **kwargs):
+        pass
+
     # pylint: disable=arguments-differ
     @staticmethod
     def load(path: str, v_scope='decoder', **kwargs):
@@ -324,10 +333,10 @@ class LinearDecoder(Decoder):
     Linear model of a decoder. Far more efficient and useful in cases where ComparativeEncoder
     achives very low loss values.
     """
+    # pylint: disable=arguments-differ
     def create_model(self):
         return _LinearRegressionModel()
 
-    # pylint: disable=arguments-differ
     def fit(self, encodings: np.ndarray, distance_on: np.ndarray, *args, jobs=1, chunksize=1,
             **kwargs):
         """
@@ -353,6 +362,7 @@ class DenseDecoder(Decoder):
     """
     Decoder model to convert generated distances into true distances.
     """
+    # pylint: disable=arguments-differ
     def create_model(self):
         dec_input = tf.keras.layers.Input((1,))
         x = tf.keras.layers.Dense(100, activation='relu')(dec_input)
@@ -364,7 +374,6 @@ class DenseDecoder(Decoder):
         decoder.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError())
         return decoder
 
-    # pylint: disable=arguments-differ
     def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, batch_size=1000, jobs=1,
                    chunksize=1):
         x, y = self.random_set(encodings, distance_on, jobs=jobs, chunksize=chunksize)
