@@ -153,7 +153,7 @@ class Pipeline:
             np.save(os.path.join(savedir, 'reprs.npy'), self.reprs)
 
     @classmethod
-    def load(cls, savedir: str, strategy=None, quiet=False, **kwargs):
+    def load(cls, savedir: str, strategy=None, quiet=False, **custom_kwargs):
         """
         Load a Pipeline from the savedir. Keyword arguments passed to ComparativeEncoder load.
         """
@@ -161,27 +161,26 @@ class Pipeline:
             raise ValueError("Directory doesn't exist!")
         contents = os.listdir(savedir)
         kwargs = cls._load_special(savedir)
+        kwargs['quiet'] = quiet
         if 'models' in contents:
             thisdir = os.path.join(savedir, 'models')
             if os.path.exists(os.path.join(thisdir, 'encoder')):
-                model = ComparativeEncoder.load(os.path.join(thisdir, 'encoder'), strategy=strategy,
-                                                quiet=quiet)
+                kwargs['model'] = ComparativeEncoder.load(os.path.join(thisdir, 'encoder'),
+                                                          strategy=strategy, quiet=quiet)
             else:
                 print('Warning: encoder missing!')
-                model = None
             if os.path.exists(os.path.join(thisdir, 'decoder')):
-                decoder = Decoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
+                kwargs['decoder'] = Decoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
             else:
                 print('Warning: decoder missing!')
-                decoder = None
         else:
             print('Warning: models missing!')
-            model, decoder = None, None
-        preproc_reprs = np.load(os.path.join(savedir, 'preproc_reprs.npy')) if 'preproc_reprs.npy' \
-            in contents else None
-        reprs = np.load(os.path.join(savedir, 'reprs.npy')) if 'reprs.npy' in contents else None
-        return cls(model=model, decoder=decoder, preproc_reprs=preproc_reprs, reprs=reprs,
-                   quiet=quiet, **kwargs)
+        if 'preproc_reprs' in contents:
+            kwargs['preproc_reprs'] = np.load(os.path.join(savedir, 'preproc_reprs.npy'))
+        if 'reprs' in contents:
+            kwargs['reprs'] = np.load(os.path.join(savedir, 'reprs.npy'))
+        kwargs.update(custom_kwargs)
+        return cls(**kwargs)
 
     @staticmethod
     def _load_special(savedir: str) -> dict:
