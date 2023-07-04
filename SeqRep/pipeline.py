@@ -64,24 +64,14 @@ class Pipeline:
         if self.reprs is not None:
             self.reprs = self.reprs[sample]
 
-    # Should be implemented by subclass unless strings are passed directly as input
-    # pylint: disable=unused-argument
-    def preprocess_seq(self, seq):
-        """
-        Preprocesses a string sequence.
-        @param seq: Sequence to preprocess.
-        @return np.ndarray: Returns seq by default.
-        """
-        return seq
-
-    # Should be overriden by subclass for efficient preprocessing
-    def preprocess_seqs(self, seqs: list) -> list:
+    # Subclass must override.
+    def preprocess_seqs(self, seqs: list) -> np.ndarray:
         """
         Preprocesses a list of sequences.
         @param seqs: Sequences to preprocess.
-        @return list: Returns an array of preprocessed sequences.
+        @return np.ndarray: Returns an array of preprocessed sequences.
         """
-        return [self.preprocess_seq(i) for i in (tqdm(seqs) if not self.quiet else seqs)]
+        return seqs
 
     # Must be implemented by subclass, super method must be called by implementation.
     # This super method preprocesses the dataset into self.preproc_reprs.
@@ -93,7 +83,9 @@ class Pipeline:
         """
         if not self.quiet:
             print('Preprocessing dataset...')
+        _, unique_inds = np.unique(self.dataset['seqs'], return_index=True)
         self.preproc_reprs = self.preprocess_seqs(self.dataset['seqs'].to_numpy(), **kwargs)
+        return unique_inds
 
     def fit_decoder(self, distance_on: np.ndarray, transform_batch_size: int, **kwargs):
         """
@@ -186,6 +178,7 @@ class Pipeline:
 
     @staticmethod
     def _load_special(savedir: str) -> dict:
+        # pylint: disable=unused-argument
         """
         Returns a dictionary of all loaded special constructor arguments for this Pipeline.
         """
@@ -221,7 +214,7 @@ class Pipeline:
                **kwargs) -> tuple[np.ndarray, list[pd.Series]]:
         """
         Search the dataset for the most similar sequences to the query. Accepts keyword arguments to
-        ComparativeEncoder.transform_distances().
+        Decoder.transform().
         @param query: List of string sequences to find similar sequences to.
         @param n_neighbors: Number of neighbors to find for each sequence. Defaults to 1.
         @return np.ndarray: Search results.
@@ -234,7 +227,7 @@ class Pipeline:
         query_enc = self.transform([query], 1)
         dists, ind = self.index.query(query_enc, k=n_neighbors)
         matches = [self.dataset.iloc[i] for i in ind[0]]
-        return self.decoder.transform(dists[0]).flatten(), matches
+        return self.decoder.transform(dists[0], **kwargs).flatten(), matches
 
     def evaluate(self, sample_size=None, jobs=1, chunksize=1):
         """
@@ -341,10 +334,6 @@ class KMerCountsPipeline(Pipeline):
         if not self.quiet:
             self.model.summary()
 
-    def preprocess_seq(self, seq: str) -> np.ndarray:
-        counts = self.counter.str_to_kmer_counts(seq)
-        return self.compressor.transform(np.array([counts]))[0]
-
     def preprocess_seqs(self, seqs: list[str], batch_size=0) -> np.ndarray:
         return self.compressor.count_kmers(self.counter, seqs, batch_size)
 
@@ -356,15 +345,16 @@ class KMerCountsPipeline(Pipeline):
         """
         if not self.model:
             self.create_model()
-        super().fit(batch_size=preproc_batch_size)
+        unique_inds = super().fit(batch_size=preproc_batch_size)
         if incremental_dist:
             self.model.distance = IncrementalDistance(self.model.distance, self.counter)
-            distance_on = self.dataset['seqs']
+            distance_on = self.dataset['seqs'].to_numpy()
         elif dist_on_preproc:
             distance_on = self.preproc_reprs
         else:
             distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
-        self.model.fit(self.preproc_reprs, distance_on=distance_on, batch_size=batch_size, **kwargs)
+        self.model.fit(self.preproc_reprs[unique_inds], distance_on=distance_on[unique_inds],
+                       batch_size=batch_size, **kwargs)
         kwargs = {k:v for k,v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.fit_decoder(distance_on, batch_size, **kwargs)
 
@@ -509,12 +499,6 @@ class HomologousSequencePipeline(Pipeline):
                                                       repr_size=repr_size)
         return model
 
-    def preprocess_seq(self, seq: str) -> str:
-        if self.converter is None:
-            print('Warning: default converter being used...')
-            self.create_converter()
-        return self.converter.transform([seq])[0]
-
     def preprocess_seqs(self, seqs: list[str]):
         if self.converter is None:
             print('Warning: default converter being used...')
@@ -529,8 +513,8 @@ class HomologousSequencePipeline(Pipeline):
         if not self.model:
             print('Warning: using default low-res model...')
             self.create_model()
-        super().fit()
-        self.model.fit(self.preproc_reprs, batch_size=batch_size, **kwargs)
+        unique_inds = super().fit()
+        self.model.fit(self.preproc_reprs[unique_inds], batch_size=batch_size, **kwargs)
         kwargs = {k:v for k,v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.fit_decoder(self.preproc_reprs, batch_size, **kwargs)
 
