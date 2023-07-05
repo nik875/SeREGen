@@ -234,6 +234,7 @@ class ComparativeEncoder(ComparativeModel):
             it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
             y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
         y = self.distance.postprocessor(y)  # Vectorized transformations are applied here
+        y = y * self.properties['repr_size']  # Scale up based on output dimensionality
 
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
         train_data = train_data.batch(batch_size)
