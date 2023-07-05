@@ -2,6 +2,7 @@
 Classes to help load and preprocess a dataset from the filesystem.
 """
 import typing
+import re
 import matplotlib.pyplot as plt
 
 import numpy as np
@@ -179,6 +180,12 @@ class Dataset(pd.DataFrame):
         """
         trimmer = _SequenceTrimmer(length)
         self['seqs'] = self['orig_seqs'].apply(trimmer.trim)
+
+    def replace_unknown_nucls(self):
+        """
+        Replace all unknown nucleotide base pairs in all sequences with N.
+        """
+        self['seqs'] = self['seqs'].apply(lambda i: re.sub('[^ATGCUN]', 'N', i))
 
     def gen_kmer_seqs(self, K=-1, jobs=1, chunksize=1, output_len=None, progress=True,
                       avoid_pad=True, avoid_oov=False, counter=None) -> list[np.ndarray]:

@@ -61,6 +61,7 @@ class Pipeline:
         else:
             builder = DatasetBuilder()
         self.dataset = builder.from_fasta(paths)
+        self.dataset.replace_unknown_nucls()
         if trim_to:
             self.dataset.trim_seqs(trim_to)
 
@@ -390,26 +391,16 @@ class KMerCountsPipeline(Pipeline):
             result['compressor'] = Compressor.load(os.path.join(savedir, 'compressor'))
         return result
 
-
-class HomologousSequencePipeline(Pipeline):
+class SequencePipeline(Pipeline):
     """
-    Sequence-based alignment estimator that factors in homologous sequences (those with the same or
-    similar protein outputs despite minor mutations).
+    Abstract sequence alignment estimator.
     """
-    VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
-
-    def __init__(self, converter=None, decoder='default', **kwargs):
+    VOCAB = []  # MUST be defined by subclass
+    def __init__(self, decoder='default', **kwargs):
         decoder = self.AVAILABLE_DECODERS[decoder](dist=alignment)
         super().__init__(decoder=decoder, **kwargs)
-        self.converter = converter
 
-    def create_converter(self, *args, **kwargs):
-        """
-        Create a Nucleotide_AA converter for the Pipeline. Directly wraps constructor.
-        """
-        self.converter = Nucleotide_AA(*args, **kwargs)
-
-    def create_model(self, res='low', seq_len=.85, repr_size=2):
+    def create_model(self, res='low', seq_len=.9, repr_size=2):
         """
         Create a model for the Pipeline.
         @param res: Resolution of the model's encoding output. Available options are:
@@ -509,12 +500,6 @@ class HomologousSequencePipeline(Pipeline):
                                                       repr_size=repr_size, loss='mse')
         return model
 
-    def preprocess_seqs(self, seqs: list[str]):
-        if self.converter is None:
-            print('Warning: default converter being used...')
-            self.create_converter()
-        return self.converter.transform(seqs)
-
     def fit(self, batch_size=256, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
@@ -528,14 +513,50 @@ class HomologousSequencePipeline(Pipeline):
         kwargs = {k:v for k,v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.fit_decoder(self.preproc_reprs, batch_size, **kwargs)
 
+    @classmethod
+    def load(cls, *args, **kwargs):
+        return super().load(*args, strategy=tf.distribute.MirroredStrategy(), **kwargs)
+
+
+class DNASequencePipeline(SequencePipeline):
+    """
+    Smith-Waterman alignment estimator for DNA sequences.
+    """
+    VOCAB = ['A', 'C', 'G', 'T']
+
+
+class RNASequencePipeline(SequencePipeline):
+    """
+    Smith-Waterman alignment estimator for RNA sequences.
+    """
+    VOCAB = ['A', 'C', 'G', 'U']
+
+
+class HomologousSequencePipeline(SequencePipeline):
+    """
+    Considers Smith-Waterman alignment of 3 possible forward reading frames.
+    """
+    VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
+    def __init__(self, converter=None, **kwargs):
+        super().__init__(**kwargs)
+        self.converter = converter
+
+    def create_converter(self, *args, **kwargs):
+        """
+        Create a Nucleotide_AA converter for the Pipeline. Directly wraps constructor.
+        """
+        self.converter = Nucleotide_AA(*args, **kwargs)
+
+    def preprocess_seqs(self, seqs: list[str]):
+        if self.converter is None:
+            print('Warning: default converter being used...')
+            self.create_converter()
+        return self.converter.transform(seqs)
+
     def save(self, savedir: str):
         super().save(savedir)
         with open(os.path.join(savedir, 'converter.pkl'), 'wb') as f:
             pickle.dump(self.converter, f)
-
-    @classmethod
-    def load(cls, *args, **kwargs):
-        return super().load(*args, strategy=tf.distribute.MirroredStrategy(), **kwargs)
 
     @staticmethod
     def _load_special(savedir: str):
