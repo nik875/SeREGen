@@ -157,7 +157,7 @@ class ComparativeEncoder(ComparativeModel):
         properties = {
             'input_shape': model.layers[0].output_shape[0][1:],
             'input_dtype': model.layers[0].dtype,
-            'repr_size': model.layers[-1].output_shape[1:],
+            'repr_size': model.layers[-1].output_shape[1],
             'depth': len(model.layers),
         }
         self.encoder = model
