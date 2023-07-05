@@ -14,9 +14,6 @@ class Distance:
     Abstract class representing a distance metric for two sequences.
     Downstream subclasses must implement transform.
     """
-    MAX_DIST = 2 ** .5
-    AVERAGE_DIST = 0.5232711374270173  # Empirically determined for this MAX_DIST
-
     def __init__(self, transform_fn=None, postprocessor_fn=None):
         """
         Allows a functional method for creating new distance metrics.
@@ -40,7 +37,9 @@ class Distance:
         @return np.ndarray
         """
         zscores = stats.zscore(data)
-        return self.MAX_DIST / (np.max(zscores) - np.min(zscores)) * zscores + self.AVERAGE_DIST
+        prob = stats.norm.cdf(zscores)
+        dists = (2 - (4 - 4 * prob) ** .5) / 2
+        return dists
 
 
 def _euclidean_transform(pair: tuple) -> int:
