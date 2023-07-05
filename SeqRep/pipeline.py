@@ -22,7 +22,7 @@ from .kmers import KMerCounter, Nucleotide_AA
 from .compression import PCA, IPCA, AE, Compressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder, Decoder, DenseDecoder, LinearDecoder
-from .distance import cosine, IncrementalDistance, alignment
+from .distance import Cosine, IncrementalDistance, Alignment
 
 
 class Pipeline:
@@ -283,9 +283,8 @@ class KMerCountsPipeline(Pipeline):
     """
     Automated pipeline using KMer Counts. Optionally compresses input data before training model.
     """
-    def __init__(self, counter=None, compressor=None, decoder='dense', **kwargs):
-        decoder = self.AVAILABLE_DECODERS[decoder](dist=cosine)
-        super().__init__(decoder=decoder, **kwargs)
+    def __init__(self, counter=None, compressor=None, **kwargs):
+        super().__init__(**kwargs)
         self.counter = counter
         self.K_ = self.counter.k if self.counter else None
         self.repr_size_ = self.model.properties['repr_size'] if self.model else None
@@ -327,7 +326,7 @@ class KMerCountsPipeline(Pipeline):
                   create_model again.')
         self.compressor.fit(sample)
 
-    def create_model(self, repr_size=2, depth=3, dist=None):
+    def create_model(self, repr_size=2, depth=3, decoder='dense', dist=None):
         """
         Create a Model for this KMerCountsPipeline. Uses all available GPUs.
         """
@@ -337,9 +336,10 @@ class KMerCountsPipeline(Pipeline):
         if not self.compressor:
             self.create_compressor('None')
 
+        self.set_decoder(decoder, dist=dist or Cosine(repr_size))
         builder = ModelBuilder((self.compressor.postcomp_len,), tf.distribute.MirroredStrategy())
         builder.dense(self.compressor.postcomp_len, depth=depth)
-        self.model = ComparativeEncoder.from_model_builder(builder, dist=dist or cosine,
+        self.model = ComparativeEncoder.from_model_builder(builder, dist=dist or Cosine(repr_size),
                                                            repr_size=repr_size, quiet=self.quiet)
         if not self.quiet:
             self.model.summary()
@@ -396,9 +396,8 @@ class SequencePipeline(Pipeline):
     Abstract sequence alignment estimator.
     """
     VOCAB = []  # MUST be defined by subclass
-    def __init__(self, decoder='default', **kwargs):
-        decoder = self.AVAILABLE_DECODERS[decoder](dist=alignment)
-        super().__init__(decoder=decoder, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def create_model(self, res='low', seq_len=.9, repr_size=2):
         """
@@ -425,19 +424,24 @@ class SequencePipeline(Pipeline):
             mean = np.mean(lengths)
             std = np.std(lengths)
             seq_len = int(target_zscore * std + mean)
+        dist = Alignment(repr_size)
         if res == 'low':
-            self.model = self.low_res_model(seq_len, repr_size)
+            self.model = self.low_res_model(seq_len, repr_size=repr_size, dist=dist)
+            self.set_decoder('linear', dist=dist)
         elif res == 'medium':
-            self.model = self.medium_res_model(seq_len, repr_size)
+            self.model = self.medium_res_model(seq_len, repr_size=repr_size, dist=dist)
+            self.set_decoder('linear', dist=dist)
         elif res == 'high':
-            self.model = self.high_res_model(seq_len, repr_size)
+            self.model = self.high_res_model(seq_len, repr_size=repr_size, dist=dist)
+            self.set_decoder('default', dist=dist)
         elif res == 'ultra':
-            self.model = self.ultra_res_model(seq_len, repr_size)
+            self.model = self.ultra_res_model(seq_len, repr_size=repr_size, dist=dist)
+            self.set_decoder('default', dist=dist)
         if not self.quiet:
             self.model.summary()
 
     @classmethod
-    def low_res_model(cls, seq_len: int, repr_size: int, compress_factor=1, depth=3):
+    def low_res_model(cls, seq_len: int, compress_factor=1, depth=3, **kwargs):
         """
         Basic dense neural network operating on top of learned embeddings for input sequences.
         """
@@ -446,12 +450,12 @@ class SequencePipeline(Pipeline):
         builder.transpose()
         builder.dense(seq_len // compress_factor, depth=depth)
         builder.transpose()
-        model = ComparativeEncoder.from_model_builder(builder, dist=alignment, repr_size=repr_size)
+        model = ComparativeEncoder.from_model_builder(builder, **kwargs)
         return model
 
     @classmethod
-    def medium_res_model(cls, seq_len: int, repr_size: int, compress_factor=4, conv_filters=16,
-                         conv_kernel_size=6):
+    def medium_res_model(cls, seq_len: int, compress_factor=4, conv_filters=16, conv_kernel_size=6,
+                         **kwargs):
         """
         Convolutional layer operating on 1/4 the length of input sequences.
         """
@@ -461,12 +465,12 @@ class SequencePipeline(Pipeline):
         builder.dense(seq_len // compress_factor)
         builder.transpose()
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, dist=alignment, repr_size=repr_size)
+        model = ComparativeEncoder.from_model_builder(builder, **kwargs)
         return model
 
     @classmethod
-    def high_res_model(cls, seq_len: int, repr_size: int, compress_factor=4, conv_filters=32,
-                       conv_kernel_size=8, attn_heads=2):
+    def high_res_model(cls, seq_len: int, compress_factor=4, conv_filters=32, conv_kernel_size=8,
+                       attn_heads=2, **kwargs):
         """
         Convolutional layer + attention block operating on 1/4 the length of input sequences.
         """
@@ -478,13 +482,12 @@ class SequencePipeline(Pipeline):
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor * 4)
         builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
-                                                      repr_size=repr_size, loss='mse')
+        model = ComparativeEncoder.from_model_builder(builder, loss='mse', **kwargs)
         return model
 
     @classmethod
-    def ultra_res_model(cls, seq_len: int, repr_size: int, compress_factor=1, conv_filters=64,
-                        conv_kernel_size=16, attn_heads=4):
+    def ultra_res_model(cls, seq_len: int, compress_factor=1, conv_filters=64, conv_kernel_size=16,
+                        attn_heads=4, **kwargs):
         """
         Convolutional layer + attention block operating on full length of input sequences.
         """
@@ -496,8 +499,7 @@ class SequencePipeline(Pipeline):
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor * 4)
         builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, dist=alignment,
-                                                      repr_size=repr_size, loss='mse')
+        model = ComparativeEncoder.from_model_builder(builder, loss='mse', **kwargs)
         return model
 
     def fit(self, batch_size=256, **kwargs):

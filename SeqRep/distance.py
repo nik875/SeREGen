@@ -2,8 +2,8 @@
 Contains distance metrics used for training ComparativeEncoders.
 """
 import numpy as np
-from scipy import stats
 from scipy.spatial.distance import euclidean as sceuclidean, cosine as sccosine
+from scipy.spatial import distance_matrix
 from Bio import pairwise2
 from .kmers import KMerCounter
 
@@ -14,12 +14,16 @@ class Distance:
     Abstract class representing a distance metric for two sequences.
     Downstream subclasses must implement transform.
     """
-    def __init__(self, transform_fn=None, postprocessor_fn=None):
-        """
-        Allows a functional method for creating new distance metrics.
-        """
-        self.transform = transform_fn or self.transform
-        self.postprocessor = postprocessor_fn or self.postprocessor
+    def __init__(self, repr_size: int, sample_size=1000):
+        self.repr_size = repr_size
+        rng = np.random.default_rng()
+        a = rng.random((sample_size, repr_size))
+        b = rng.random((sample_size, repr_size))
+        mat = distance_matrix(a, b)
+        dists = mat.flatten()
+        self.enc_space_mean = np.mean(dists)
+        self.enc_space_std = np.std(dists)
+        self.dist_space_mean, self.dist_space_std = None, None
 
     #pylint: disable=unused-argument
     def transform(self, pair: tuple) -> int:
@@ -36,20 +40,35 @@ class Distance:
         @param data: np.ndarray
         @return np.ndarray
         """
-        zscores = stats.zscore(data)
-        prob = stats.norm.cdf(zscores)
-        dists = (2 - (4 - 4 * prob) ** .5) / 2
-        return dists
+        self.dist_space_mean = np.mean(data)
+        self.dist_space_std = np.std(data)
+        zscores = (data - self.dist_space_mean) / self.dist_space_std
+        return zscores * self.enc_space_std + self.enc_space_mean
+
+    def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
+        """
+        Inverts the postprocessing of data to return raw transform results.
+        @param data: np.ndarray
+        @return np.ndarray
+        """
+        zscores = (data - self.enc_space_mean) / self.enc_space_std
+        return zscores * self.dist_space_std + self.dist_space_mean
 
 
-def _euclidean_transform(pair: tuple) -> int:
-    return sceuclidean(*pair)
-euclidean = Distance(transform_fn=_euclidean_transform)
+class Euclidean(Distance):
+    """
+    Basic Euclidean distance implementation
+    """
+    def transform(self, pair: tuple) -> int:
+        return sceuclidean(*pair)
 
 
-def _cosine_transform(pair: tuple) -> int:
-    return sccosine(*pair)
-cosine = Distance(transform_fn=_cosine_transform)
+class Cosine(Distance):
+    """
+    Cosine distance implementation.
+    """
+    def transform(self, pair: tuple) -> int:
+        return sccosine(*pair)
 
 
 class IncrementalDistance(Distance):
@@ -58,39 +77,28 @@ class IncrementalDistance(Distance):
     Use when not enough memory exists to fully encode a dataset into K-Mers with the specified K.
     """
     def __init__(self, distance: Distance, counter: KMerCounter):
-        super().__init__()
+        super().__init__(distance.repr_size)
         self.distance = distance
         self.counter = counter
 
     def transform(self, pair: tuple) -> int:
-        """
-        Converts the pair of sequences to K-Mers, then finds the distance.
-        """
         kmer_pair = self.counter.str_to_kmer_counts(pair[0]), \
             self.counter.str_to_kmer_counts(pair[1])
         return self.distance.transform(kmer_pair)
 
 
-class _Alignment(Distance):
+class Alignment(Distance):
     """
     Normalized alignment distance between two textual DNA sequences. Sequences must
     all have equal lengths.
     """
     def transform(self, pair: tuple) -> int:
-        """
-        Transforms a single pair of strings into a SIMILARITY SCORE.
-        @param pair: tuple of two strings
-        @return int: normalized alignment distance
-        """
         return pairwise2.align.localxx(*pair, score_only=True) / max(map(len, pair))
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
-        """
-        Converts similarity scores into normalized distances for output.
-        @param data: np.ndarray
-        @return np.ndarray
-        """
         data = 1 - data  # Convert similarity scores into distances
         return super().postprocessor(data)
-alignment = _Alignment()
+
+    def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
+        return 1 - super().invert_postprocessing(data)
 

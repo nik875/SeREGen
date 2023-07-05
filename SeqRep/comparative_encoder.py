@@ -14,7 +14,6 @@ import tensorflow as tf
 from keras import backend as K
 from tqdm import tqdm
 
-from .distance import Distance
 from .encoders import ModelBuilder
 
 
@@ -43,7 +42,7 @@ class ComparativeModel:
     def __init__(self, v_scope='model', dist=None, model=None, strategy=None,
                  history=None, quiet=False, properties=None, **kwargs):
         self.strategy = strategy or tf.distribute.get_strategy()
-        self.distance = dist or Distance()
+        self.distance = dist
         self.quiet = quiet
         self.properties = {} if properties is None else properties
         self.history = history or {}
@@ -80,6 +79,7 @@ class ComparativeModel:
         """
         if patience < 1:
             raise ValueError('Patience value must be >1.')
+        wait = 0
         for i in range(epochs):
             start = time.time()
             if not self.quiet:
@@ -89,10 +89,12 @@ class ComparativeModel:
                 print(f'Epoch time: {time.time() - start}')
             self.history = {k: v + this_history[k] for k, v in self.history.items()} if \
                 self.history else this_history
-            if not early_stop:
+            if not early_stop or i == 0:
                 continue
-            past_losses = self.history['loss'][-patience - 1:]
-            if past_losses[-1] - past_losses[0] > -min_delta:
+            prev_best = max(self.history('loss')[:-1])
+            this_loss = self.history['loss'][-1]
+            wait = 0 if this_loss < prev_best - min_delta else wait + 1
+            if wait >= patience:
                 print('Stopping early due to lack of improvement!')
                 break
         return self.history
