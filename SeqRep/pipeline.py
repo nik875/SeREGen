@@ -527,7 +527,7 @@ class SequencePipeline(Pipeline):
             print('Warning: using default low-res model...')
             self.create_model()
         unique_inds = super().fit()
-        self.model.fit(self.preproc_reprs[unique_inds].to_numpy(), batch_size=batch_size, **kwargs)
+        self.model.fit(self.preproc_reprs[unique_inds], batch_size=batch_size, **kwargs)
         kwargs = {k:v for k,v in kwargs.items() if k in ['jobs', 'chunksize']}
         self.fit_decoder(self.preproc_reprs, batch_size, **kwargs)
 
