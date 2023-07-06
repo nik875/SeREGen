@@ -498,7 +498,7 @@ class SequencePipeline(Pipeline):
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor * 4)
         builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, loss='mse', **kwargs)
+        model = ComparativeEncoder.from_model_builder(builder, **kwargs)
         return model
 
     @classmethod
@@ -515,7 +515,7 @@ class SequencePipeline(Pipeline):
         builder.conv1D(conv_filters, conv_kernel_size, seq_len // compress_factor * 4)
         builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
         builder.attention(attn_heads, seq_len // compress_factor)
-        model = ComparativeEncoder.from_model_builder(builder, loss='mse', **kwargs)
+        model = ComparativeEncoder.from_model_builder(builder, **kwargs)
         return model
 
     def fit(self, batch_size=256, **kwargs):
