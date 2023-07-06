@@ -97,7 +97,7 @@ class Pipeline:
         if not self.quiet:
             print('Preprocessing dataset...')
         _, unique_inds = np.unique(self.dataset['seqs'], return_index=True)
-        self.preproc_reprs = self.preprocess_seqs(self.dataset['seqs'].to_numpy(), **kwargs)
+        self.preprocess_dataset(**kwargs)
         return unique_inds
 
     def fit_decoder(self, distance_on: np.ndarray, transform_batch_size: int, **kwargs):
@@ -134,6 +134,12 @@ class Pipeline:
         """
         self._fit_called_check()
         return self.model.transform(self.preprocess_seqs(seqs), batch_size)
+
+    def preprocess_dataset(self, **kwargs) -> np.ndarray:
+        """
+        Preprocesses all sequences in dataset.
+        """
+        self.preproc_reprs = self.preprocess_seqs(self.dataset['seqs'], **kwargs)
 
     def transform_dataset(self, batch_size: int, **kwargs) -> np.ndarray:
         """
