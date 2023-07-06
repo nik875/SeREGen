@@ -183,9 +183,9 @@ class Pipeline:
                 kwargs['decoder'] = Decoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
         else:
             print('Warning: models missing!')
-        if 'preproc_reprs' in contents:
+        if 'preproc_reprs.npy' in contents:
             kwargs['preproc_reprs'] = np.load(os.path.join(savedir, 'preproc_reprs.npy'))
-        if 'reprs' in contents:
+        if 'reprs.npy' in contents:
             kwargs['reprs'] = np.load(os.path.join(savedir, 'reprs.npy'))
         kwargs.update(custom_kwargs)
         return cls(**kwargs)
