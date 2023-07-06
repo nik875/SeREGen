@@ -181,9 +181,10 @@ class Pipeline:
                 print('Warning: encoder missing!')
             if os.path.exists(os.path.join(thisdir, 'decoder')):
                 kwargs['decoder'] = Decoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
+            else:
+                kwargs['decoder'] = Decoder()
         else:
             print('Warning: models missing!')
-        # TODO: DISABLE ALLOW PICKLE
         if 'preproc_reprs.npy' in contents:
             kwargs['preproc_reprs'] = np.load(os.path.join(savedir, 'preproc_reprs.npy'),
                                               allow_pickle=True)
