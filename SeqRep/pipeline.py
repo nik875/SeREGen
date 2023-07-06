@@ -167,6 +167,7 @@ class Pipeline:
         """
         Load a Pipeline from the savedir. Keyword arguments passed to ComparativeEncoder load.
         """
+        # pylint: disable=broad-exception-caught
         if not os.path.exists(savedir):
             raise ValueError("Directory doesn't exist!")
         contents = os.listdir(savedir)
@@ -186,10 +187,16 @@ class Pipeline:
         else:
             print('Warning: models missing!')
         if 'preproc_reprs.npy' in contents:
-            kwargs['preproc_reprs'] = np.load(os.path.join(savedir, 'preproc_reprs.npy'),
-                                              allow_pickle=True)
+            try:
+                kwargs['preproc_reprs'] = np.load(os.path.join(savedir, 'preproc_reprs.npy'),
+                                                  allow_pickle=True)
+            except Exception as e:
+                print('Warning: exception in loading preproc_reprs: ' + e)
         if 'reprs.npy' in contents:
-            kwargs['reprs'] = np.load(os.path.join(savedir, 'reprs.npy'), allow_pickle=True)
+            try:
+                kwargs['reprs'] = np.load(os.path.join(savedir, 'reprs.npy'), allow_pickle=True)
+            except Exception as e:
+                print('Warning: exception in loading preproc_reprs: ' + e)
         kwargs.update(custom_kwargs)
         return cls(**kwargs)
 
