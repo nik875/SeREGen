@@ -91,7 +91,7 @@ class ComparativeModel:
                 self.history else this_history
             if not early_stop or i == 0:
                 continue
-            prev_best = max(self.history('loss')[:-1])
+            prev_best = max(self.history['loss'][:-1])
             this_loss = self.history['loss'][-1]
             wait = 0 if this_loss < prev_best - min_delta else wait + 1
             if wait >= patience:
