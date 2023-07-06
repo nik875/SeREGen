@@ -80,6 +80,7 @@ class ComparativeModel:
         if patience < 1:
             raise ValueError('Patience value must be >1.')
         wait = 0
+        best_weights = self.model.get_weights()
         for i in range(epochs):
             start = time.time()
             if not self.quiet:
@@ -91,11 +92,16 @@ class ComparativeModel:
                 self.history else this_history
             if not early_stop or i == 0:
                 continue
-            prev_best = max(self.history['loss'][:-1])
+            prev_best = min(self.history['loss'][:-1])
             this_loss = self.history['loss'][-1]
-            wait = 0 if this_loss < prev_best - min_delta else wait + 1
+            if this_loss < prev_best - min_delta:
+                best_weights = self.model.get_weights()
+                wait = 0
+            else:
+                wait += 1
             if wait >= patience:
                 print('Stopping early due to lack of improvement!')
+                self.model.set_weights(best_weights)
                 break
         return self.history
 
