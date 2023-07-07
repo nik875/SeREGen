@@ -78,13 +78,17 @@ class Pipeline:
             self.reprs = self.reprs[sample]
 
     # Subclass must override.
-    def preprocess_seqs(self, seqs: list) -> np.ndarray:
+    def preprocess_seqs(self, seqs) -> np.ndarray:
         """
         Preprocesses a list of sequences.
         @param seqs: Sequences to preprocess.
         @return np.ndarray: Returns an array of preprocessed sequences.
         """
-        return seqs.to_numpy()
+        if isinstance(seqs, list):
+            return np.array(seqs)
+        if isinstance(seqs, pd.Series):
+            return seqs.to_numpy()
+        return seqs
 
     # Must be implemented by subclass, super method must be called by implementation.
     # This super method preprocesses the dataset into self.preproc_reprs.
