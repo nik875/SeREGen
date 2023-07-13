@@ -62,7 +62,7 @@ class ModelBuilder:
         return in_scopes
 
     @classmethod
-    def text_input(cls, vocab: list[str], embed_dim=None, max_len=None, v_scope='encoder',
+    def text_input(cls, vocab: list[str], embed_dim: int, max_len: int, v_scope='encoder',
                    **kwargs):
         """
         Factory function that returns a new ModelBuilder object which can receive text input. Adds a
@@ -82,10 +82,7 @@ class ModelBuilder:
                                vocabulary=vocab,
                                standardize=None,
                                split='character')
-        if embed_dim:
-            obj.embedding(len(vocab) + 2, embed_dim, input_length = max_len)
-        else:
-            obj.one_hot_encoding(len(vocab) + 2)
+        obj.embedding(len(vocab) + 2, embed_dim, input_length=max_len)
         return obj
 
     @_apply_scopes
@@ -107,18 +104,6 @@ class ModelBuilder:
         self.current = tf.keras.layers.Embedding(input_dim, output_dim,
                                                  mask_zero=mask_zero,
                                                  **kwargs)(self.current)
-
-    @_apply_scopes
-    def one_hot_encoding(self, num_tokens: int, **kwargs):
-        """
-        Adds a CategoryEncoding layer configured to one-hot encode input sequences. Useful when
-        vocabulary size is very small (i.e. model is directly processing nucleotides).
-        @param num_tokens: Number of tokens to encode. All integer inputs must fall within
-        0 <= token <= num_tokens.
-        """
-        self.current = tf.keras.layers.CategoryEncoding(num_tokens=num_tokens,
-                                                        output_mode='one_hot',
-                                                        **kwargs)(self.current)
 
     def summary(self):
         """

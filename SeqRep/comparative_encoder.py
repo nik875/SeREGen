@@ -238,9 +238,13 @@ class ComparativeEncoder(ComparativeModel):
         x2 = data[p2]
         y2 = distance_on[p2]
 
-        with mp.Pool(jobs) as p:
-            it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
-            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
+        if jobs == 1:
+            it = tqdm(zip(y1, y2)) if self.quiet else zip(y1, y2)
+            y = np.fromiter((self.distance.transform(i) for i in it), dtype=np.float64)
+        else:
+            with mp.Pool(jobs) as p:
+                it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
+                y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
         y = self.distance.postprocessor(y)  # Vectorized transformations are applied here
 
         train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
