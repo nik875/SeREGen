@@ -157,7 +157,7 @@ class ComparativeEncoder(ComparativeModel):
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, model: tf.keras.Model, v_scope='encoder', **kwargs):
+    def __init__(self, model: tf.keras.Model, v_scope='encoder', embed_dist='euclidean', **kwargs):
         """
         @param encoder: TensorFlow model that must support .train() and .predict() at minimum.
         @param dist: distance metric to use when comparing two sequences.
@@ -170,13 +170,20 @@ class ComparativeEncoder(ComparativeModel):
         }
         self.encoder = model
         super().__init__(v_scope, properties=properties, **kwargs)
+        match embed_dist.lower():
+            case 'euclidean':
+                self.dist_cl = self.EuclideanDistanceLayer()
+            case 'hyperbolic':
+                self.dist_cl = self.HyperbolicDistanceLayer()
+            case _:
+                raise ValueError('Invalid embedding distance provided!')
 
     def create_model(self, loss='corr_coef'):
         inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
                                        dtype=self.properties['input_dtype'])
         inputb = tf.keras.layers.Input(self.properties['input_shape'], name='input_b',
                                        dtype=self.properties['input_dtype'])
-        distances = self.DistanceLayer()(
+        distances = self.dist_cl(
             self.encoder(inputa),
             self.encoder(inputb),
         )
@@ -195,13 +202,36 @@ class ComparativeEncoder(ComparativeModel):
         encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
         return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
 
-    class DistanceLayer(tf.keras.layers.Layer):
+    class EuclideanDistanceLayer(tf.keras.layers.Layer):
         """
         This layer computes the distance between its two prior layers.
         """
-        # pylint: disable=missing-function-docstring
         def call(self, a, b):
             return tf.reduce_sum(tf.square(a - b), -1)
+
+    class HyperbolicDistanceLayer(tf.keras.layers.Layer):
+        def build(self, input_shape):
+            # pylint: disable=attribute-defined-outside-init
+            self.radius = self.add_weight(shape=(1,), initializer='ones', trainable=True,
+                                          name='radius')
+            self.scaling = self.add_weight(shape=(1,), initializer='ones', trainable=True,
+                                           name='scaling')
+            super().build(input_shape)
+
+        def call(self, a, b):
+            """
+            Computes hyperbolic distance in Poincaré ball model.
+            """
+            norm_a_sq = tf.reduce_sum(a**2, axis=1, keepdims=True)
+            norm_b_sq = tf.reduce_sum(b**2, axis=1, keepdims=True)
+            squared_distance = tf.reduce_sum((a - b)**2, axis=1, keepdims=True)
+            denominator = (1 - norm_a_sq) * (1 - norm_b_sq)
+            term_inside_arcosh = 1 + (2 * squared_distance) / denominator
+            hyperbolic_distance = tf.math.acosh(term_inside_arcosh)
+            return hyperbolic_distance * self.scaling
+
+        def compute_output_shape(self, input_shape):
+            return (input_shape[0][0], 1)
 
     @staticmethod
     def correlation_coefficient_loss(y_true, y_pred):
