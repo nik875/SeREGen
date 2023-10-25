@@ -169,7 +169,6 @@ class ComparativeEncoder(ComparativeModel):
             'depth': len(model.layers),
         }
         self.encoder = model
-        super().__init__(v_scope, properties=properties, **kwargs)
         match embed_dist.lower():
             case 'euclidean':
                 self.dist_cl = self.EuclideanDistanceLayer()
@@ -177,6 +176,7 @@ class ComparativeEncoder(ComparativeModel):
                 self.dist_cl = self.HyperbolicDistanceLayer()
             case _:
                 raise ValueError('Invalid embedding distance provided!')
+        super().__init__(v_scope, properties=properties, **kwargs)
 
     def create_model(self, loss='corr_coef'):
         inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
@@ -202,6 +202,7 @@ class ComparativeEncoder(ComparativeModel):
         encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
         return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
 
+    @staticmethod
     class EuclideanDistanceLayer(tf.keras.layers.Layer):
         """
         This layer computes the distance between its two prior layers.
@@ -209,6 +210,7 @@ class ComparativeEncoder(ComparativeModel):
         def call(self, a, b):
             return tf.reduce_sum(tf.square(a - b), -1)
 
+    @staticmethod
     class HyperbolicDistanceLayer(tf.keras.layers.Layer):
         def build(self, input_shape):
             # pylint: disable=attribute-defined-outside-init
@@ -269,7 +271,7 @@ class ComparativeEncoder(ComparativeModel):
         y2 = distance_on[p2]
 
         if jobs == 1:
-            it = tqdm(zip(y1, y2)) if self.quiet else zip(y1, y2)
+            it = tqdm(zip(y1, y2)) if not self.quiet else zip(y1, y2)
             y = np.fromiter((self.distance.transform(i) for i in it), dtype=np.float64)
         else:
             with mp.Pool(jobs) as p:

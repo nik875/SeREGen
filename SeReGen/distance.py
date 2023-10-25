@@ -4,7 +4,8 @@ Contains distance metrics used for training ComparativeEncoders.
 import numpy as np
 from scipy.spatial.distance import euclidean as sceuclidean, cosine as sccosine
 from scipy.spatial import distance_matrix
-from Bio import pairwise2
+from Bio.Align import PairwiseAligner
+from rdkit.Chem import AllChem, DataStructs
 from .kmers import KMerCounter
 
 
@@ -92,8 +93,12 @@ class Alignment(Distance):
     Normalized alignment distance between two textual DNA sequences. Sequences must
     all have equal lengths.
     """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.aligner = PairwiseAligner()
+
     def transform(self, pair: tuple) -> int:
-        return pairwise2.align.localxx(*pair, score_only=True) / max(map(len, pair))
+        return self.aligner.align(*pair).score / max(map(len, pair))
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
         data = 1 - data  # Convert similarity scores into distances
@@ -102,3 +107,13 @@ class Alignment(Distance):
     def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
         return 1 - super().invert_postprocessing(data)
 
+
+class CompoundDistance(Distance):
+    def transform(self, pair: tuple):
+        fp1 = AllChem.GetMorganFingerprintAsBitVect(pair[0], 2, nBits=1024)
+        fp2 = AllChem.GetMorganFingerprintAsBitVect(pair[1], 2, nBits=1024)
+        return DataStructs.TanimotoSimilarity(fp1, fp2)
+
+    def postprocessor(self, data: np.ndarray) -> np.ndarray:
+        data = 1 - data  # Convert similarity scores into distances
+        return super().postprocessor(data)

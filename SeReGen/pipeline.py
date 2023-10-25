@@ -346,7 +346,7 @@ class KMerCountsPipeline(Pipeline):
                   create_model again.')
         self.compressor.fit(sample)
 
-    def create_model(self, repr_size=2, depth=3, decoder='dense', dist=None):
+    def create_model(self, repr_size=2, depth=3, decoder='dense', dist=None, distribute_strategy=None):
         """
         Create a Model for this KMerCountsPipeline. Uses all available GPUs.
         """
@@ -357,7 +357,9 @@ class KMerCountsPipeline(Pipeline):
             self.create_compressor('None')
 
         self.set_decoder(decoder, dist=dist or Cosine(repr_size))
-        builder = ModelBuilder((self.compressor.postcomp_len,), tf.distribute.MirroredStrategy())
+        builder = ModelBuilder((self.compressor.postcomp_len,),
+                               distribute_strategy=distribute_strategy or
+                               tf.distribute.MirroredStrategy())
         builder.dense(self.compressor.postcomp_len, depth=depth)
         self.model = ComparativeEncoder.from_model_builder(builder, dist=dist or Cosine(repr_size),
                                                            repr_size=repr_size, quiet=self.quiet)
