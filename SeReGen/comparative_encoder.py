@@ -223,6 +223,12 @@ class ComparativeEncoder(ComparativeModel):
             """
             Computes hyperbolic distance in Poincaré ball model.
             """
+            # Normalize embeddings to have normalized distance from origin
+            a_norms = tf.norm(a, axis=-1, keepdims=True)
+            a = a / (a_norms + tf.keras.backend.epsilon())  # Add epsilon to avoid div by zero
+            b_norms = tf.norm(b, axis=-1, keepdims=True)
+            b = b / (b_norms + tf.keras.backend.epsilon())
+
             norm_a_sq = tf.reduce_sum(a**2, axis=1, keepdims=True)
             norm_b_sq = tf.reduce_sum(b**2, axis=1, keepdims=True)
             squared_distance = tf.reduce_sum((a - b)**2, axis=1, keepdims=True)
