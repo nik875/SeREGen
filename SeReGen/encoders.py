@@ -184,6 +184,7 @@ class ModelBuilder:
         for _ in range(depth):
             self.current = tf.keras.layers.Dense(size, activation=activation,
                                                  **kwargs)(self.current)
+            self.current = tf.keras.layers.BatchNormalization()(self.current)
 
     @_apply_scopes
     def conv1D(self, filters: int, kernel_size: int, output_size: int, **kwargs):

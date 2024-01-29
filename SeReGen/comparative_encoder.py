@@ -169,13 +169,12 @@ class ComparativeEncoder(ComparativeModel):
             'depth': len(model.layers),
         }
         self.encoder = model
-        match embed_dist.lower():
-            case 'euclidean':
-                self.dist_cl = self.EuclideanDistanceLayer()
-            case 'hyperbolic':
-                self.dist_cl = self.HyperbolicDistanceLayer()
-            case _:
-                raise ValueError('Invalid embedding distance provided!')
+        if embed_dist.lower() == 'euclidean':
+            self.dist_cl = self.EuclideanDistanceLayer()
+        elif embed_dist.lower() == 'hyperbolic':
+            self.dist_cl = self.HyperbolicDistanceLayer()
+        else:
+            raise ValueError('Invalid embedding distance provided!')
         super().__init__(v_scope, properties=properties, **kwargs)
 
     def create_model(self, loss='corr_coef'):
