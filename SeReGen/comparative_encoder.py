@@ -39,13 +39,14 @@ class ComparativeModel:
     """
     Abstract ComparativeModel class. Stores some useful common functions.
     """
-    def __init__(self, v_scope='model', dist=None, model=None, strategy=None,
-                 history=None, quiet=False, properties=None, **kwargs):
+    def __init__(self, v_scope='model', dist=None, embed_dist='euclidean', model=None,
+                 strategy=None, history=None, quiet=False, properties=None, **kwargs):
         self.strategy = strategy or tf.distribute.get_strategy()
         self.distance = dist
         self.quiet = quiet
         self.properties = {} if properties is None else properties
         self.history = history or {}
+        self.embed_dist = embed_dist
         with tf.name_scope(v_scope):
             with self.strategy.scope():
                 self.model = model or self.create_model(**kwargs)
@@ -121,6 +122,8 @@ class ComparativeModel:
         model.save(os.path.join(path, 'model'))
         with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
             pickle.dump(self.distance, f)
+        with open(os.path.join(path, 'embed_dist.txt'), 'w') as f:
+            f.write(self.embed_dist)
         if self.history:
             with open(os.path.join(path, 'history.json'), 'w') as f:
                 json.dump(self.history, f)
@@ -145,19 +148,25 @@ class ComparativeModel:
         else:
             with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
                 dist = pickle.load(f)
+        if 'embed_dist.txt' not in contents:
+            print('Warning: embedding distance save file missing, assuming Euclidean')
+            dist = 'euclidean'
+        else:
+            with open(os.path.join(path, 'embed_dist.txt'), 'r') as f:
+                embed_dist = f.read().strip()
         history = None
         if 'history.json' in contents:
             with open(os.path.join(path, 'history.json'), 'r') as f:
                 history = json.load(f)
         return cls(v_scope=v_scope, dist=dist, model=model, strategy=strategy, history=history,
-                   **kwargs)
+                   embed_dist=embed_dist, **kwargs)
 
 
 class ComparativeEncoder(ComparativeModel):
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, model: tf.keras.Model, v_scope='encoder', embed_dist='euclidean', **kwargs):
+    def __init__(self, model: tf.keras.Model, v_scope='encoder', **kwargs):
         """
         @param encoder: TensorFlow model that must support .train() and .predict() at minimum.
         @param dist: distance metric to use when comparing two sequences.
@@ -169,38 +178,14 @@ class ComparativeEncoder(ComparativeModel):
             'depth': len(model.layers),
         }
         self.encoder = model
-        match embed_dist.lower():
+        super().__init__(v_scope, properties=properties, **kwargs)
+        match self.embed_dist.lower():
             case 'euclidean':
                 self.dist_cl = self.EuclideanDistanceLayer()
             case 'hyperbolic':
                 self.dist_cl = self.HyperbolicDistanceLayer()
             case _:
                 raise ValueError('Invalid embedding distance provided!')
-        super().__init__(v_scope, properties=properties, **kwargs)
-
-    def create_model(self, loss='corr_coef'):
-        inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
-                                       dtype=self.properties['input_dtype'])
-        inputb = tf.keras.layers.Input(self.properties['input_shape'], name='input_b',
-                                       dtype=self.properties['input_dtype'])
-        distances = self.dist_cl(
-            self.encoder(inputa),
-            self.encoder(inputb),
-        )
-        loss_kwargs = {'loss': 'mse', 'metrics': ['mae']} if loss == 'mse' else \
-            {'loss': self.correlation_coefficient_loss}
-        comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
-        comparative_model.compile(optimizer='adam', **loss_kwargs)
-        return comparative_model
-
-    @classmethod
-    def from_model_builder(cls, builder: ModelBuilder, repr_size=None, **kwargs):
-        """
-        Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
-        distribute strategy and variable scope.
-        """
-        encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
-        return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
 
     @staticmethod
     class EuclideanDistanceLayer(tf.keras.layers.Layer):
@@ -254,6 +239,30 @@ class ComparativeEncoder(ComparativeModel):
         r = r_num / r_den
         r = K.maximum(K.minimum(r, 1.0), -1.0)
         return 1 - r
+
+    def create_model(self, loss='corr_coef'):
+        inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
+                                       dtype=self.properties['input_dtype'])
+        inputb = tf.keras.layers.Input(self.properties['input_shape'], name='input_b',
+                                       dtype=self.properties['input_dtype'])
+        distances = self.dist_cl(
+            self.encoder(inputa),
+            self.encoder(inputb),
+        )
+        loss_kwargs = {'loss': 'mse', 'metrics': ['mae']} if loss == 'mse' else \
+            {'loss': self.correlation_coefficient_loss}
+        comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
+        comparative_model.compile(optimizer='adam', **loss_kwargs)
+        return comparative_model
+
+    @classmethod
+    def from_model_builder(cls, builder: ModelBuilder, repr_size=None, **kwargs):
+        """
+        Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
+        distribute strategy and variable scope.
+        """
+        encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
+        return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
 
     # pylint: disable=arguments-differ
     def train_step(self, data: np.ndarray, distance_on: np.ndarray, batch_size=100, jobs=1,
@@ -343,6 +352,8 @@ class Decoder(ComparativeModel):
         """
         Create a random set of distance data from the inputs.
         """
+        if self.embed_dist == 'hyperbolic':
+            raise NotImplementedError('Hyperbolic distance calculation not yet implemented.')
         rng = np.random.default_rng()
         p1 = rng.permutation(distance_on.shape[0])
         y1 = distance_on[p1]
