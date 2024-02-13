@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial.distance import euclidean as sceuclidean, cosine as sccosine
 from scipy.spatial import distance_matrix
 from Bio.Align import PairwiseAligner
+import py_stringmatching as sm
 from rdkit.Chem import AllChem, DataStructs
 from .kmers import KMerCounter
 
@@ -88,10 +89,23 @@ class IncrementalDistance(Distance):
         return self.distance.transform(kmer_pair)
 
 
-class Alignment(Distance):
+class EditDistance(Distance):
     """
-    Normalized alignment distance between two textual DNA sequences. Sequences must
-    all have equal lengths.
+    Normalized Needleman-Wunsch edit distance between textual DNA sequences.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.aligner = sm.NeedlemanWunsch()
+
+    def transform(self, pair: tuple) -> int:
+        return self.aligner.get_raw_score(*pair) / max(map(len, pair))
+
+
+class SmithWaterman(Distance):
+    """
+    Normalized alignment distance between two textual DNA sequences. Distance is computed from
+    Smith-Waterman local alignment similarity scores. Unpublished, not recommended unless this
+    legacy functionality is necessary.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -109,6 +123,9 @@ class Alignment(Distance):
 
 
 class CompoundDistance(Distance):
+    """
+    Distance between two chemical compounds.
+    """
     def transform(self, pair: tuple):
         fp1 = AllChem.GetMorganFingerprintAsBitVect(pair[0], 2, nBits=1024)
         fp2 = AllChem.GetMorganFingerprintAsBitVect(pair[1], 2, nBits=1024)
