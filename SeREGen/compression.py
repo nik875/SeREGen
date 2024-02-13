@@ -78,8 +78,8 @@ class Compressor:
         """
         self.fit_called = True
 
-    # pylint: disable=unused-argument
     def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
+        # pylint: disable=unused-argument
         """
         Compress an array of data elements.
         @param data: data to compress.
@@ -88,8 +88,8 @@ class Compressor:
         """
         return data
 
-    # pylint: disable=unused-argument
     def inverse_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
+        # pylint: disable=unused-argument
         """
         Decodes the compressed data back to original.
         @param data: data to decode.
