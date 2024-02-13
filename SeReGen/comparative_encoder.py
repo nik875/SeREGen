@@ -197,14 +197,6 @@ class ComparativeEncoder(ComparativeModel):
 
     @staticmethod
     class HyperbolicDistanceLayer(tf.keras.layers.Layer):
-        def build(self, input_shape):
-            # pylint: disable=attribute-defined-outside-init
-            self.radius = self.add_weight(shape=(1,), initializer='ones', trainable=True,
-                                          name='radius')
-            self.scaling = self.add_weight(shape=(1,), initializer='ones', trainable=True,
-                                           name='scaling')
-            super().build(input_shape)
-
         def call(self, a, b):
             """
             Computes hyperbolic distance in Poincaré ball model.
@@ -220,8 +212,7 @@ class ComparativeEncoder(ComparativeModel):
             squared_distance = tf.reduce_sum((a - b)**2, axis=1, keepdims=True)
             denominator = (1 - norm_a_sq) * (1 - norm_b_sq)
             term_inside_arcosh = 1 + (2 * squared_distance) / denominator
-            hyperbolic_distance = tf.math.acosh(term_inside_arcosh)
-            return hyperbolic_distance * self.scaling
+            return tf.math.acosh(term_inside_arcosh)
 
         def compute_output_shape(self, input_shape):
             return (input_shape[0][0], 1)
@@ -341,6 +332,26 @@ class ComparativeEncoder(ComparativeModel):
         self.encoder.summary()
 
 
+def hyperbolic_distance(a, b):
+    """
+    Computes hyperbolic distance between two arrays of points in Poincaré ball model.
+    """
+    a = a.astype(np.float64)  # Both arrays must be the same type
+    b = b.astype(np.float64)
+    eps = np.finfo(np.float64).eps  # Machine epsilon
+    a_norms = np.linalg.norm(a, axis=-1)
+    a = a / (a_norms + eps)  # Add epsilon to avoid div by zero
+    b_norms = np.linalg.norm(b, axis=-1)
+    b = b / (b_norms + eps)
+
+    norm_a_sq = np.sum(a**2, axis=-1)
+    norm_b_sq = np.sum(b**2, axis=-1)
+    squared_distance = np.sum((a - b)**2, axis=-1)
+    denominator = (1 - norm_a_sq) * (1 - norm_b_sq)
+    term_inside_arcosh = 1 + (2 * squared_distance) / denominator
+    return np.arccosh(term_inside_arcosh)
+
+
 class Decoder(ComparativeModel):
     """
     Abstract Decoder for encoding distances.
@@ -352,8 +363,6 @@ class Decoder(ComparativeModel):
         """
         Create a random set of distance data from the inputs.
         """
-        if self.embed_dist == 'hyperbolic':
-            raise NotImplementedError('Hyperbolic distance calculation not yet implemented.')
         rng = np.random.default_rng()
         p1 = rng.permutation(distance_on.shape[0])
         y1 = distance_on[p1]
@@ -367,15 +376,18 @@ class Decoder(ComparativeModel):
         # distance, even if the postprocessed distances only have meaning in context of the current
         # dataset because of normalization.
         x1, x2 = encodings[p1], encodings[p2]
-        x = np.fromiter((euclidean(x1[i], x2[i]) for i in range(len(y))), dtype=np.float64)
+        if self.embed_dist == 'hyperbolic':
+            x = hyperbolic_distance(x1, x2)
+        else:
+            x = np.fromiter((euclidean(*i) for i in zip(x1, x2)), dtype=np.float64)
         return x, y
 
     def fit(self, *args, **kwargs):
         pass
 
-    # pylint: disable=arguments-differ
     @staticmethod
     def load(path: str, v_scope='decoder', **kwargs):
+        # pylint: disable=arguments-differ
         contents = os.listdir(path)
         if 'model.pkl' in contents:
             return LinearDecoder.load(path)
@@ -383,7 +395,6 @@ class Decoder(ComparativeModel):
 
 
 class _LinearRegressionModel(LinearRegression):
-    # pylint: disable=missing-class-docstring,missing-function-docstring
     def save(self, path: str):
         with open(path + '.pkl', 'wb') as f:
             pickle.dump(self, f)
