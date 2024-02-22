@@ -198,8 +198,14 @@ class ComparativeEncoder(ComparativeModel):
         Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
         distribute strategy and variable scope.
         """
-        encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
-        return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
+        compile_args = {}
+        if repr_size:
+            compile_args['repr_size'] = repr_size
+        if 'embed_dist' in kwargs:
+            compile_args['embed_space'] = kwargs['embed_dist']
+        encoder = builder.compile(**compile_args)
+        return cls(encoder, strategy=builder.strategy,
+                   v_scope=builder.v_scope, **kwargs)
 
     @staticmethod
     class EuclideanDistanceLayer(tf.keras.layers.Layer):
@@ -223,22 +229,18 @@ class ComparativeEncoder(ComparativeModel):
             """
             Computes hyperbolic distance in Poincaré ball model.
             """
-            # Normalize embeddings to have normalized distance from origin
-            a_norms = tf.norm(a, axis=-1, keepdims=True)
-            a = a / (a_norms + tf.keras.backend.epsilon())  # Add epsilon to avoid div by zero
-            b_norms = tf.norm(b, axis=-1, keepdims=True)
-            b = b / (b_norms + tf.keras.backend.epsilon())
-
-            norm_a_sq = tf.reduce_sum(a**2, axis=1, keepdims=True)
-            norm_b_sq = tf.reduce_sum(b**2, axis=1, keepdims=True)
-            squared_distance = tf.reduce_sum((a - b)**2, axis=1, keepdims=True)
-            denominator = (1 - norm_a_sq) * (1 - norm_b_sq)
-            term_inside_arcosh = 1 + (2 * squared_distance) / denominator
-            hyperbolic_distance = tf.math.acosh(term_inside_arcosh)
+            # Partially adapted from https://github.com/kousun12/tf_hyperbolic
+            sq_norm = lambda v: tf.clip_by_value(
+                tf.reduce_sum(v ** 2),
+                clip_value_min=tf.keras.backend.epsilon(),
+                clip_value_max=1 - tf.keras.backend.epsilon()
+            )
+            numerator = tf.reduce_sum(tf.pow(a - b, 2), axis=-1)
+            denominator_a = 1 - sq_norm(a)
+            denominator_b = 1 - sq_norm(b)
+            frac = numerator / (denominator_a * denominator_b)
+            hyperbolic_distance = tf.math.acosh(1 + 2 * frac)
             return hyperbolic_distance * self.scaling
-
-        def compute_output_shape(self, input_shape):
-            return (input_shape[0][0], 1)
 
     @staticmethod
     def correlation_coefficient_loss(y_true, y_pred):

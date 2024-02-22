@@ -116,9 +116,16 @@ class ModelBuilder:
         Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size
         """
         return tuple(self.current.shape[1:])
-
+        
+    class DynamicNormScalingLayer(tf.keras.layers.Layer):
+        """
+        Scale down the input such that the maximum absolute value is 1.
+        """
+        def __call__(self, inputs):
+            return inputs / tf.reduce_max(tf.norm(inputs, axis=-1))
+        
     @_apply_scopes
-    def compile(self, repr_size=2) -> tf.keras.Model:
+    def compile(self, repr_size=2, embed_space='euclidean') -> tf.keras.Model:
         """
         Create and return an encoder model.
         @param repr_size: Number of dimensions of output point (default 2 for visualization).
@@ -126,6 +133,8 @@ class ModelBuilder:
         """
         self.flatten()
         self.dense(repr_size, activation=None)  # Create special output layer
+        if embed_space == 'hyperbolic':
+            self.custom_layer(self.DynamicNormScalingLayer())
         return tf.keras.Model(inputs=self.inputs, outputs=self.current)
 
     @_apply_scopes
