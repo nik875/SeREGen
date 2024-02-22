@@ -178,58 +178,13 @@ class ComparativeEncoder(ComparativeModel):
             'depth': len(model.layers),
         }
         self.encoder = model
+        if embed_dist.lower() == 'euclidean':
+            self.dist_cl = self.EuclideanDistanceLayer()
+        elif embed_dist.lower() == 'hyperbolic':
+            self.dist_cl = self.HyperbolicDistanceLayer()
+        else:
+            raise ValueError('Invalid embedding distance provided!')
         super().__init__(v_scope, properties=properties, **kwargs)
-        match self.embed_dist.lower():
-            case 'euclidean':
-                self.dist_cl = self.EuclideanDistanceLayer()
-            case 'hyperbolic':
-                self.dist_cl = self.HyperbolicDistanceLayer()
-            case _:
-                raise ValueError('Invalid embedding distance provided!')
-
-    @staticmethod
-    class EuclideanDistanceLayer(tf.keras.layers.Layer):
-        """
-        This layer computes the distance between its two prior layers.
-        """
-        def call(self, a, b):
-            return tf.reduce_sum(tf.square(a - b), -1)
-
-    @staticmethod
-    class HyperbolicDistanceLayer(tf.keras.layers.Layer):
-        def call(self, a, b):
-            """
-            Computes hyperbolic distance in Poincaré ball model.
-            """
-            # Normalize embeddings to have normalized distance from origin
-            a_norms = tf.norm(a, axis=-1, keepdims=True)
-            a = a / (a_norms + tf.keras.backend.epsilon())  # Add epsilon to avoid div by zero
-            b_norms = tf.norm(b, axis=-1, keepdims=True)
-            b = b / (b_norms + tf.keras.backend.epsilon())
-
-            norm_a_sq = tf.reduce_sum(a**2, axis=1, keepdims=True)
-            norm_b_sq = tf.reduce_sum(b**2, axis=1, keepdims=True)
-            squared_distance = tf.reduce_sum((a - b)**2, axis=1, keepdims=True)
-            denominator = (1 - norm_a_sq) * (1 - norm_b_sq)
-            term_inside_arcosh = 1 + (2 * squared_distance) / denominator
-            return tf.math.acosh(term_inside_arcosh)
-
-        def compute_output_shape(self, input_shape):
-            return (input_shape[0][0], 1)
-
-    @staticmethod
-    def correlation_coefficient_loss(y_true, y_pred):
-        """
-        Correlation coefficient loss function for ComparativeEncoder.
-        """
-        x, y = y_true, y_pred
-        mx, my = K.mean(x), K.mean(y)
-        xm, ym = x - mx, y - my
-        r_num = K.sum(tf.multiply(xm, ym))
-        r_den = K.sqrt(tf.multiply(K.sum(K.square(xm)), K.sum(K.square(ym))))
-        r = r_num / r_den
-        r = K.maximum(K.minimum(r, 1.0), -1.0)
-        return 1 - r
 
     def create_model(self, loss='corr_coef'):
         inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
@@ -252,8 +207,55 @@ class ComparativeEncoder(ComparativeModel):
         Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
         distribute strategy and variable scope.
         """
-        encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
-        return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
+        compile_args = {}
+        if repr_size:
+            compile_args['repr_size'] = repr_size
+        if 'embed_dist' in kwargs:
+            compile_args['embed_space'] = kwargs['embed_dist']
+        encoder = builder.compile(**compile_args)
+        return cls(encoder, strategy=builder.strategy,
+                   v_scope=builder.v_scope, **kwargs)
+
+    @staticmethod
+    class EuclideanDistanceLayer(tf.keras.layers.Layer):
+        """
+        This layer computes the distance between its two prior layers.
+        """
+        def call(self, a, b):
+            return tf.reduce_sum(tf.square(a - b), -1)
+
+    @staticmethod
+    class HyperbolicDistanceLayer(tf.keras.layers.Layer):
+        def call(self, a, b):
+            """
+            Computes hyperbolic distance in Poincaré ball model.
+            """
+            # Partially adapted from https://github.com/kousun12/tf_hyperbolic
+            sq_norm = lambda v: tf.clip_by_value(
+                tf.reduce_sum(v ** 2),
+                clip_value_min=tf.keras.backend.epsilon(),
+                clip_value_max=1 - tf.keras.backend.epsilon()
+            )
+            numerator = tf.reduce_sum(tf.pow(a - b, 2), axis=-1)
+            denominator_a = 1 - sq_norm(a)
+            denominator_b = 1 - sq_norm(b)
+            frac = numerator / (denominator_a * denominator_b)
+            hyperbolic_distance = tf.math.acosh(1 + 2 * frac)
+            return hyperbolic_distance * self.scaling
+
+    @staticmethod
+    def correlation_coefficient_loss(y_true, y_pred):
+        """
+        Correlation coefficient loss function for ComparativeEncoder.
+        """
+        x, y = y_true, y_pred
+        mx, my = K.mean(x), K.mean(y)
+        xm, ym = x - mx, y - my
+        r_num = K.sum(tf.multiply(xm, ym))
+        r_den = K.sqrt(tf.multiply(K.sum(K.square(xm)), K.sum(K.square(ym))))
+        r = r_num / r_den
+        r = K.maximum(K.minimum(r, 1.0), -1.0)
+        return 1 - r
 
     # pylint: disable=arguments-differ
     def train_step(self, data: np.ndarray, distance_on: np.ndarray, batch_size=100, jobs=1,

@@ -65,12 +65,28 @@ class Euclidean(Distance):
         return sceuclidean(*pair)
 
 
+class EuclideanWithoutNorm(Euclidean):
+    def postprocessor(self, data):
+        return data
+    
+    def invert_postprocessing(self, data):
+        return data
+
+
 class Cosine(Distance):
     """
     Cosine distance implementation.
     """
     def transform(self, pair: tuple) -> int:
         return sccosine(*pair)
+
+
+class CosineWithoutNorm(Cosine):
+    def postprocessor(self, data):
+        return data
+    
+    def invert_postprocessing(self, data):
+        return data
 
 
 class IncrementalDistance(Distance):
@@ -120,6 +136,14 @@ class SmithWaterman(Distance):
 
     def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
         return 1 - super().invert_postprocessing(data)
+    
+    
+class AlignmentWithoutNorm(Alignment):
+    def postprocessor(self, data):
+        return 1 - data
+    
+    def invert_postprocessing(self, data):
+        return 1 - data
 
 
 class CompoundDistance(Distance):

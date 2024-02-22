@@ -9,7 +9,7 @@ from .dataset_builder import Dataset
 
 
 def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='.', figsize=(8, 6),
-                     savepath=None):
+                     savepath=None, scale=None):
     """
     Create a simple scatterplot of sequence representations.
     Suggested alpha for SILVA dataset representations: .05
@@ -25,6 +25,9 @@ def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='.', figsiz
     plt.scatter(x, y, alpha=alpha, marker=marker)
     if title:
         plt.title(title)
+    if scale:
+        plt.xlim(-scale, scale)
+        plt.ylim(-scale, scale)
     if savepath:
         plt.savefig(savepath)
     plt.show()
@@ -40,8 +43,6 @@ def reprs_by_ds_label(reprs: np.ndarray, ds: Dataset, label: typing.Union[str, i
     @param *args: other necessary arguments for reprs_by_label
     @param **kwargs: optional kwargs for reprs_by_label
     """
-    if mask is not None:
-        reprs, ds = reprs[mask], ds.loc[mask]
     tax = np.stack(ds['labels'])
 
     label_idx = label if isinstance(label, int) else ds['labels'].index_of_label(label)
@@ -52,7 +53,8 @@ def reprs_by_ds_label(reprs: np.ndarray, ds: Dataset, label: typing.Union[str, i
 
 
 def reprs_by_label(reprs: np.ndarray, lbls: np.ndarray, title: str,
-                  alpha=.1, marker='.', filter=None, savepath=None, mask=None, **kwargs):
+                  alpha=.1, marker='.', filter=None, savepath=None, mask=None, 
+                   scale=None, **kwargs):
     """
     Scatterplot of representations colored based on an array of categorical labels. Lower-level
     function.
@@ -65,9 +67,13 @@ def reprs_by_label(reprs: np.ndarray, lbls: np.ndarray, title: str,
     @param savepath: path to save to
     @param mask: boolean mask to apply to all arrays
     """
+    if mask is not None:
+        reprs = reprs[mask]
+        lbls = lbls[mask]
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111)
     rng = np.random.default_rng()
+    legend_labels = []
     for i in (unique_labels := np.unique(lbls)):  # For each unique value
         pop = reprs[lbls == i]  # All labels matching it
         if filter and len(pop) > filter:  # If we are filtering and have a sufficient count
@@ -78,14 +84,18 @@ def reprs_by_label(reprs: np.ndarray, lbls: np.ndarray, title: str,
             x, y = zip(*pop)
         else:
             continue
+        legend_labels.append(i)
         # Plot x, y with all given plot arguments
         ax.scatter(x, y, alpha=alpha, marker=marker, **kwargs)
 
     # Other plot stuff
     ax.set_title(title)
-    leg = plt.legend(unique_labels, markerscale=1, borderpad=1)
+    leg = plt.legend(legend_labels, markerscale=1, borderpad=1)
     for lh in leg.legendHandles:  # Set alpha of legend so that we can see it
         lh.set_alpha(1)
+    if scale:
+        plt.xlim(-scale, scale)
+        plt.ylim(-scale, scale)
     if savepath:  # Save file if requested
         plt.savefig(savepath)
     plt.show()  # Show plot
