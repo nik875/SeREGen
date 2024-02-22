@@ -136,14 +136,6 @@ class SmithWaterman(Distance):
 
     def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
         return 1 - super().invert_postprocessing(data)
-    
-    
-class AlignmentWithoutNorm(Alignment):
-    def postprocessor(self, data):
-        return 1 - data
-    
-    def invert_postprocessing(self, data):
-        return 1 - data
 
 
 class CompoundDistance(Distance):
