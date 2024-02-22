@@ -121,9 +121,7 @@ class ComparativeModel:
         try:
             os.makedirs(path)
         except FileExistsError:
-            replace = input("Directory exists, overwrite contents? (y/N)")
-            if replace.lower() != 'y':
-                return
+            print("WARN: Directory exists, overwriting...")
             shutil.rmtree(path)
             os.makedirs(path)
         model = model or self.model
