@@ -22,7 +22,7 @@ from .kmers import KMerCounter, Nucleotide_AA
 from .compression import PCA, IPCA, AE, Compressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder, Decoder, DenseDecoder, LinearDecoder
-from .distance import Cosine, IncrementalDistance, Alignment
+from .distance import Cosine, IncrementalDistance, EditDistance
 
 
 class Pipeline:
@@ -446,7 +446,7 @@ class SequencePipeline(Pipeline):
             mean = np.mean(lengths)
             std = np.std(lengths)
             seq_len = int(target_zscore * std + mean)
-        self.set_decoder('linear', dist=(dist := Alignment(repr_size)))
+        self.set_decoder('linear', dist=(dist := EditDistance(repr_size)))
         if res == 'low':
             self.model = self.low_res_model(seq_len, repr_size=repr_size, dist=dist)
         elif res == 'medium':

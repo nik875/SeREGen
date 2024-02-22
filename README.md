@@ -1,12 +1,32 @@
 # SeqRep
 
-**This tool is still in active development.** Install all requirements in a fresh Python virtual environment running Python 3.10 or greater using `pip install jupyter tensorflow kpal pandas matplotlib`. Requirements file is not clean and may contain unnecessary or outdated packages.
+**This tool is still in active development.** Below is the list of requirements (install with a simple pip command):
 
-SeqRep is a DNA dataset visualization and sequence representation tool available as a Python package. This is a computationally intensive analysis methodology, and best results are achieved when running on a modern computer with multiple CPU cores and a powerful GPU. The central idea is to train a machine learning model to convert individual DNA sequences into n-dimensional points, such that the distances between any two points in space is correlated with the true dissimilarity of those points' parent DNA sequences.
+```
+numpy
+tqdm
+py_stringmatching
+tensorflow
+sklearn
+matplotlib
+keras
+Bio
+pandas
+scipy
+rdkit
+```
 
-Currently, a preliminary library implementation of this methodology is offered, with goals of being easy-to-use, efficient, and highly extensible. Some knowledge of machine learning and TensorFlow is helpful, but not required to use this library. A copy of SILVA's 16S database is included, along with a basic Jupyter Notebook that highlights this tool's visualization applications. A full analysis pipeline is also planned for the future to make this methodology more accessible to less technical researchers.
+SeREGen is a biological sequence representation tool that will be available as a Python package. This is a computationally intensive analysis methodology, and best results are achieved when running on a modern computer with multiple CPU cores and a powerful GPU. The central idea is to train a machine learning model to convert individual DNA sequences into n-dimensional points, such that the distances between any two points in space is correlated with the true dissimilarity of those points' parent DNA sequences.
 
-Inside the SeqRep library are six modules:
+Currently, a preliminary library implementation of this methodology is offered, with goals of being easy-to-use, efficient, and highly extensible. Some knowledge of machine learning and TensorFlow is helpful, but not required to use this library. A copy of SILVA's 16S database is included, along with several Jupyter notebooks which show this tool's applications.
+
+## Tutorial
+
+---
+
+**Below is the legacy documentation. This is very out of date.**
+
+Inside the SeqRep library are the following modules:
 
 - dataset_builder.py
     * DatasetBuilder

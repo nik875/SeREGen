@@ -39,13 +39,14 @@ class ComparativeModel:
     """
     Abstract ComparativeModel class. Stores some useful common functions.
     """
-    def __init__(self, v_scope='model', dist=None, model=None, strategy=None,
-                 history=None, quiet=False, properties=None, **kwargs):
+    def __init__(self, v_scope='model', dist=None, embed_dist='euclidean', model=None,
+                 strategy=None, history=None, quiet=False, properties=None, **kwargs):
         self.strategy = strategy or tf.distribute.get_strategy()
         self.distance = dist
         self.quiet = quiet
         self.properties = {} if properties is None else properties
         self.history = history or {}
+        self.embed_dist = embed_dist
         with tf.name_scope(v_scope):
             with self.strategy.scope():
                 self.model = model or self.create_model(**kwargs)
@@ -121,6 +122,8 @@ class ComparativeModel:
         model.save(os.path.join(path, 'model'))
         with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
             pickle.dump(self.distance, f)
+        with open(os.path.join(path, 'embed_dist.txt'), 'w') as f:
+            f.write(self.embed_dist)
         if self.history:
             with open(os.path.join(path, 'history.json'), 'w') as f:
                 json.dump(self.history, f)
@@ -145,19 +148,25 @@ class ComparativeModel:
         else:
             with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
                 dist = pickle.load(f)
+        if 'embed_dist.txt' not in contents:
+            print('Warning: embedding distance save file missing, assuming Euclidean')
+            dist = 'euclidean'
+        else:
+            with open(os.path.join(path, 'embed_dist.txt'), 'r') as f:
+                embed_dist = f.read().strip()
         history = None
         if 'history.json' in contents:
             with open(os.path.join(path, 'history.json'), 'r') as f:
                 history = json.load(f)
         return cls(v_scope=v_scope, dist=dist, model=model, strategy=strategy, history=history,
-                   **kwargs)
+                   embed_dist=embed_dist, **kwargs)
 
 
 class ComparativeEncoder(ComparativeModel):
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, model: tf.keras.Model, v_scope='encoder', embed_dist='euclidean', **kwargs):
+    def __init__(self, model: tf.keras.Model, v_scope='encoder', **kwargs):
         """
         @param encoder: TensorFlow model that must support .train() and .predict() at minimum.
         @param dist: distance metric to use when comparing two sequences.
@@ -217,14 +226,6 @@ class ComparativeEncoder(ComparativeModel):
 
     @staticmethod
     class HyperbolicDistanceLayer(tf.keras.layers.Layer):
-        def build(self, input_shape):
-            # pylint: disable=attribute-defined-outside-init
-            self.radius = self.add_weight(shape=(1,), initializer='ones', trainable=True,
-                                          name='radius')
-            self.scaling = self.add_weight(shape=(1,), initializer='ones', trainable=True,
-                                           name='scaling')
-            super().build(input_shape)
-
         def call(self, a, b):
             """
             Computes hyperbolic distance in Poincaré ball model.
@@ -333,6 +334,26 @@ class ComparativeEncoder(ComparativeModel):
         self.encoder.summary()
 
 
+def hyperbolic_distance(a, b):
+    """
+    Computes hyperbolic distance between two arrays of points in Poincaré ball model.
+    """
+    a = a.astype(np.float64)  # Both arrays must be the same type
+    b = b.astype(np.float64)
+    eps = np.finfo(np.float64).eps  # Machine epsilon
+    a_norms = np.linalg.norm(a, axis=-1)
+    a = a / (a_norms + eps)  # Add epsilon to avoid div by zero
+    b_norms = np.linalg.norm(b, axis=-1)
+    b = b / (b_norms + eps)
+
+    norm_a_sq = np.sum(a**2, axis=-1)
+    norm_b_sq = np.sum(b**2, axis=-1)
+    squared_distance = np.sum((a - b)**2, axis=-1)
+    denominator = (1 - norm_a_sq) * (1 - norm_b_sq)
+    term_inside_arcosh = 1 + (2 * squared_distance) / denominator
+    return np.arccosh(term_inside_arcosh)
+
+
 class Decoder(ComparativeModel):
     """
     Abstract Decoder for encoding distances.
@@ -357,15 +378,18 @@ class Decoder(ComparativeModel):
         # distance, even if the postprocessed distances only have meaning in context of the current
         # dataset because of normalization.
         x1, x2 = encodings[p1], encodings[p2]
-        x = np.fromiter((euclidean(x1[i], x2[i]) for i in range(len(y))), dtype=np.float64)
+        if self.embed_dist == 'hyperbolic':
+            x = hyperbolic_distance(x1, x2)
+        else:
+            x = np.fromiter((euclidean(*i) for i in zip(x1, x2)), dtype=np.float64)
         return x, y
 
     def fit(self, *args, **kwargs):
         pass
 
-    # pylint: disable=arguments-differ
     @staticmethod
     def load(path: str, v_scope='decoder', **kwargs):
+        # pylint: disable=arguments-differ
         contents = os.listdir(path)
         if 'model.pkl' in contents:
             return LinearDecoder.load(path)
@@ -373,7 +397,6 @@ class Decoder(ComparativeModel):
 
 
 class _LinearRegressionModel(LinearRegression):
-    # pylint: disable=missing-class-docstring,missing-function-docstring
     def save(self, path: str):
         with open(path + '.pkl', 'wb') as f:
             pickle.dump(self, f)
