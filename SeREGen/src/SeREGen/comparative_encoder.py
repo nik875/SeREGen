@@ -9,6 +9,7 @@ import time
 import multiprocessing as mp
 
 import numpy as np
+import pandas as pd
 from scipy.spatial.distance import euclidean
 from sklearn.linear_model import LinearRegression
 import tensorflow as tf
@@ -270,6 +271,9 @@ class ComparativeEncoder(ComparativeModel):
         @param jobs: number of CPU jobs to use.
         @param chunksize: chunksize for Python multiprocessing.
         """
+        # It's common to input pandas series from Dataset instead of numpy array
+        data = data.to_numpy() if isinstance(data, pd.Series) else data
+        distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
         rng = np.random.default_rng()
         p1 = rng.permutation(data.shape[0])
         x1 = data[p1]
