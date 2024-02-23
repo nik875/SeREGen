@@ -1,1 +1,1 @@
-README.md
+See SeREGen/README.md

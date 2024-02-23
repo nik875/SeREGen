@@ -56,6 +56,7 @@ class ModelBuilder:
     # pylint: disable=no-self-argument,not-callable
     def _apply_scopes(fn):
         def in_scopes(self, *args, **kwargs):
+            __doc__ = fn.__doc__  # Set the documentation
             with tf.name_scope(self.v_scope):
                 with self.strategy.scope():
                     return fn(self, *args, **kwargs)

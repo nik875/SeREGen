@@ -10,6 +10,10 @@ Currently, a preliminary library implementation of this methodology is offered, 
 
 ## FAQ
 
+**Q: Distance vs Embedding Distance?**
+
+A: Generally, Distance refers to the distance between model inputs (Euclidean between k-mer count arrays, Levenshtein between string sequences, etc). Embedding distance is the distance metric used in the embedding space, trained to match with the true Distance. This is 'euclidean' or 'hyperbolic'.
+
 **Q: I'm getting this error when calling fit: `ValueError: tried to create variables on non-first call`.**
 
 A: If you attempted to run a text_input model in the past, you need to reinitialize the model before running again.

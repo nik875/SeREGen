@@ -78,8 +78,9 @@ class ComparativeModel:
         Train the model based on the given parameters. Extra arguments are passed to train_step.
         @param epochs: epochs to train for.
         @param min_delta: Minimum change required to qualify as an improvement.
-        @param patience: How many epochs with no improvement before giving up.
+        @param patience: How many epochs with no improvement before giving up. patience=0 disables.
         """
+        patience = patience or epochs + 1  # If patience==0, do not early stop
         if patience < 1:
             raise ValueError('Patience value must be >1.')
         wait = 0
