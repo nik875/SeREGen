@@ -127,3 +127,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+*blast*
+embeddings.pkl
+
+Models
+COVID-Data
+SILVA*
