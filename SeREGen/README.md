@@ -1,25 +1,22 @@
 # SeqRep
 
-**This tool is still in active development.** Below is the list of requirements (install with a simple pip command):
-
-```
-numpy
-tqdm
-py_stringmatching
-tensorflow
-scikit-learn
-matplotlib
-biopython
-pandas
-scipy
-rdkit
-```
+**This tool is still in active development.** Install with `pip install SeREGen`.
 
 SeREGen is a biological sequence representation tool that will be available as a Python package. This is a computationally intensive analysis methodology, and best results are achieved when running on a modern computer with multiple CPU cores and a powerful GPU. The central idea is to train a machine learning model to convert individual DNA sequences into n-dimensional points, such that the distances between any two points in space is correlated with the true dissimilarity of those points' parent DNA sequences.
 
 Currently, a preliminary library implementation of this methodology is offered, with goals of being easy-to-use, efficient, and highly extensible. Some knowledge of machine learning and TensorFlow is helpful, but not required to use this library. A copy of SILVA's 16S database is included, along with several Jupyter notebooks which show this tool's applications.
 
 ## Tutorial
+
+## FAQ
+
+**Q: Distance vs Embedding Distance?**
+
+A: Generally, Distance refers to the distance between model inputs (Euclidean between k-mer count arrays, Levenshtein between string sequences, etc). Embedding distance is the distance metric used in the embedding space, trained to match with the true Distance. This is 'euclidean' or 'hyperbolic'.
+
+**Q: I'm getting this error when calling fit: `ValueError: tried to create variables on non-first call`.**
+
+A: If you attempted to run a text_input model in the past, you need to reinitialize the model before running again.
 
 ---
 

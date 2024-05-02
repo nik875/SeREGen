@@ -56,6 +56,7 @@ class ModelBuilder:
     # pylint: disable=no-self-argument,not-callable
     def _apply_scopes(fn):
         def in_scopes(self, *args, **kwargs):
+            __doc__ = fn.__doc__  # Set the documentation
             with tf.name_scope(self.v_scope):
                 with self.strategy.scope():
                     return fn(self, *args, **kwargs)
@@ -97,7 +98,7 @@ class ModelBuilder:
         """
         Adds an Embedding layer to preprocess ordinally encoded input sequences.
         Arguments are passed directly to Embedding constructor.
-        @param input_dim: Vocabulary size for Embedding input.
+        @param input_dim: Each input character must range from [0, input_dim).
         @param output_dim: Size of encoding for each character in the sequences.
         @param mask_zero: Whether to generate a mask for zero values in the input. Defaults to True.
         """
@@ -116,14 +117,14 @@ class ModelBuilder:
         Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size
         """
         return tuple(self.current.shape[1:])
-        
+
     class DynamicNormScalingLayer(tf.keras.layers.Layer):
         """
         Scale down the input such that the maximum absolute value is 1.
         """
         def __call__(self, inputs):
             return inputs / tf.reduce_max(tf.norm(inputs, axis=-1))
-        
+
     @_apply_scopes
     def compile(self, repr_size=2, embed_space='euclidean') -> tf.keras.Model:
         """

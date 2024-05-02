@@ -2,12 +2,14 @@
 ComparativeEncoder module, trains a model comparatively using distances.
 """
 import os
+import shutil
 import pickle
 import json
 import time
 import multiprocessing as mp
 
 import numpy as np
+import pandas as pd
 from scipy.spatial.distance import euclidean
 from sklearn.linear_model import LinearRegression
 import tensorflow as tf
@@ -76,8 +78,9 @@ class ComparativeModel:
         Train the model based on the given parameters. Extra arguments are passed to train_step.
         @param epochs: epochs to train for.
         @param min_delta: Minimum change required to qualify as an improvement.
-        @param patience: How many epochs with no improvement before giving up.
+        @param patience: How many epochs with no improvement before giving up. patience=0 disables.
         """
+        patience = patience or epochs + 1  # If patience==0, do not early stop
         if patience < 1:
             raise ValueError('Patience value must be >1.')
         wait = 0
@@ -117,7 +120,12 @@ class ComparativeModel:
         Save the model to the given path.
         @param path: path to save to.
         """
-        os.makedirs(path)
+        try:
+            os.makedirs(path)
+        except FileExistsError:
+            print("WARN: Directory exists, overwriting...")
+            shutil.rmtree(path)
+            os.makedirs(path)
         model = model or self.model
         model.save(os.path.join(path, 'model'))
         with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
@@ -178,12 +186,6 @@ class ComparativeEncoder(ComparativeModel):
             'depth': len(model.layers),
         }
         self.encoder = model
-        if embed_dist.lower() == 'euclidean':
-            self.dist_cl = self.EuclideanDistanceLayer()
-        elif embed_dist.lower() == 'hyperbolic':
-            self.dist_cl = self.HyperbolicDistanceLayer()
-        else:
-            raise ValueError('Invalid embedding distance provided!')
         super().__init__(v_scope, properties=properties, **kwargs)
 
     def create_model(self, loss='corr_coef'):
@@ -191,7 +193,14 @@ class ComparativeEncoder(ComparativeModel):
                                        dtype=self.properties['input_dtype'])
         inputb = tf.keras.layers.Input(self.properties['input_shape'], name='input_b',
                                        dtype=self.properties['input_dtype'])
-        distances = self.dist_cl(
+        # Set embedding distance calculation layer
+        if self.embed_dist.lower() == 'euclidean':
+            dist_cl = self.EuclideanDistanceLayer()
+        elif self.embed_dist.lower() == 'hyperbolic':
+            dist_cl = self.HyperbolicDistanceLayer()
+        else:
+            raise ValueError('Invalid embedding distance provided!')
+        distances = dist_cl(
             self.encoder(inputa),
             self.encoder(inputb),
         )
@@ -207,14 +216,8 @@ class ComparativeEncoder(ComparativeModel):
         Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
         distribute strategy and variable scope.
         """
-        compile_args = {}
-        if repr_size:
-            compile_args['repr_size'] = repr_size
-        if 'embed_dist' in kwargs:
-            compile_args['embed_space'] = kwargs['embed_dist']
-        encoder = builder.compile(**compile_args)
-        return cls(encoder, strategy=builder.strategy,
-                   v_scope=builder.v_scope, **kwargs)
+        encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
+        return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
 
     @staticmethod
     class EuclideanDistanceLayer(tf.keras.layers.Layer):
@@ -240,8 +243,7 @@ class ComparativeEncoder(ComparativeModel):
             denominator_a = 1 - sq_norm(a)
             denominator_b = 1 - sq_norm(b)
             frac = numerator / (denominator_a * denominator_b)
-            hyperbolic_distance = tf.math.acosh(1 + 2 * frac)
-            return hyperbolic_distance * self.scaling
+            return tf.math.acosh(1 + 2 * frac) * self.scaling
 
     @staticmethod
     def correlation_coefficient_loss(y_true, y_pred):
@@ -270,6 +272,9 @@ class ComparativeEncoder(ComparativeModel):
         @param jobs: number of CPU jobs to use.
         @param chunksize: chunksize for Python multiprocessing.
         """
+        # It's common to input pandas series from Dataset instead of numpy array
+        data = data.to_numpy() if isinstance(data, pd.Series) else data
+        distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
         rng = np.random.default_rng()
         p1 = rng.permutation(data.shape[0])
         x1 = data[p1]

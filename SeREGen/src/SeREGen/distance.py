@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial.distance import euclidean as sceuclidean, cosine as sccosine
 from scipy.spatial import distance_matrix
 from Bio.Align import PairwiseAligner
+import Levenshtein
 import py_stringmatching as sm
 from rdkit.Chem import AllChem, DataStructs
 from .kmers import KMerCounter
@@ -107,14 +108,14 @@ class IncrementalDistance(Distance):
 
 class EditDistance(Distance):
     """
-    Normalized Needleman-Wunsch edit distance between textual DNA sequences.
+    Normalized Levenshtein edit distance between textual DNA sequences.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.aligner = sm.NeedlemanWunsch()
+        self.aligner = Levenshtein.distance
 
     def transform(self, pair: tuple) -> int:
-        return self.aligner.get_raw_score(*pair) / max(map(len, pair))
+        return self.aligner(*pair) / max(map(len, pair))
 
 
 class SmithWaterman(Distance):
@@ -136,14 +137,6 @@ class SmithWaterman(Distance):
 
     def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
         return 1 - super().invert_postprocessing(data)
-    
-    
-class AlignmentWithoutNorm(Alignment):
-    def postprocessor(self, data):
-        return 1 - data
-    
-    def invert_postprocessing(self, data):
-        return 1 - data
 
 
 class CompoundDistance(Distance):
