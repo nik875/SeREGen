@@ -53,8 +53,8 @@ def reprs_by_ds_label(reprs: np.ndarray, ds: Dataset, label: typing.Union[str, i
 
 
 def reprs_by_label(reprs: np.ndarray, lbls: np.ndarray, title: str,
-                  alpha=.1, marker='.', filter=None, savepath=None, mask=None,
-                   scale=None, **kwargs):
+                   alpha=.1, marker='.', filter=None, savepath=None, mask=None,
+                   scale=None, random_seed=None, **kwargs):
     # pylint: disable=redefined-builtin
     """
     Scatterplot of representations colored based on an array of categorical labels. Lower-level
@@ -73,7 +73,7 @@ def reprs_by_label(reprs: np.ndarray, lbls: np.ndarray, title: str,
         lbls = lbls[mask]
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111)
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed=random_seed)
     legend_labels = []
     for i in np.unique(lbls):  # For each unique value
         pop = reprs[lbls == i]  # All labels matching it

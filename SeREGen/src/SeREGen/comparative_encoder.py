@@ -13,7 +13,7 @@ import pandas as pd
 from scipy.spatial.distance import euclidean
 from sklearn.linear_model import LinearRegression
 import tensorflow as tf
-from keras import backend as K
+import tensorflow.math as M
 from tqdm import tqdm
 
 from .encoders import ModelBuilder
@@ -42,13 +42,15 @@ class ComparativeModel:
     Abstract ComparativeModel class. Stores some useful common functions.
     """
     def __init__(self, v_scope='model', dist=None, embed_dist='euclidean', model=None,
-                 strategy=None, history=None, quiet=False, properties=None, **kwargs):
+                 strategy=None, history=None, quiet=False, properties=None, random_seed=None,
+                 **kwargs):
         self.strategy = strategy or tf.distribute.get_strategy()
         self.distance = dist
         self.quiet = quiet
         self.properties = {} if properties is None else properties
         self.history = history or {}
         self.embed_dist = embed_dist
+        self.rng = np.random.default_rng(seed=random_seed)
         with tf.name_scope(v_scope):
             with self.strategy.scope():
                 self.model = model or self.create_model(**kwargs)
@@ -127,7 +129,7 @@ class ComparativeModel:
             shutil.rmtree(path)
             os.makedirs(path)
         model = model or self.model
-        model.save(os.path.join(path, 'model'))
+        model.save(os.path.join(path, 'model.h5'))
         with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
             pickle.dump(self.distance, f)
         with open(os.path.join(path, 'embed_dist.txt'), 'w') as f:
@@ -143,12 +145,12 @@ class ComparativeModel:
         """
         contents = os.listdir(path)
         if not model:
-            if 'model' not in contents:
+            if 'model.h5' not in contents:
                 raise ValueError('Model save file is necessary for loading a ComparativeModel!')
             strategy = strategy or tf.distribute.get_strategy()
             with tf.name_scope(v_scope):
                 with strategy.scope():
-                    model = tf.keras.models.load_model(os.path.join(path, 'model'))
+                    model = tf.keras.models.load_model(os.path.join(path, 'model.h5'))
 
         if 'distance.pkl' not in contents:
             print('Warning: distance save file missing!')
@@ -180,9 +182,9 @@ class ComparativeEncoder(ComparativeModel):
         @param dist: distance metric to use when comparing two sequences.
         """
         properties = {
-            'input_shape': model.layers[0].output_shape[0][1:],
-            'input_dtype': model.layers[0].dtype,
-            'repr_size': model.layers[-1].output_shape[1],
+            'input_shape': model.layers[0].output.shape[1:],
+            'input_dtype': model.layers[0].input_dtype,
+            'repr_size': model.layers[-1].output.shape[1],
             'depth': len(model.layers),
         }
         self.encoder = model
@@ -243,7 +245,7 @@ class ComparativeEncoder(ComparativeModel):
             denominator_a = 1 - sq_norm(a)
             denominator_b = 1 - sq_norm(b)
             frac = numerator / (denominator_a * denominator_b)
-            return tf.math.acosh(1 + 2 * frac) * self.scaling
+            return tf.math.acosh(1 + 2 * frac)
 
     @staticmethod
     def correlation_coefficient_loss(y_true, y_pred):
@@ -251,16 +253,16 @@ class ComparativeEncoder(ComparativeModel):
         Correlation coefficient loss function for ComparativeEncoder.
         """
         x, y = y_true, y_pred
-        mx, my = K.mean(x), K.mean(y)
+        mx, my = M.reduce_mean(x), M.reduce_mean(y)
         xm, ym = x - mx, y - my
-        r_num = K.sum(tf.multiply(xm, ym))
-        r_den = K.sqrt(tf.multiply(K.sum(K.square(xm)), K.sum(K.square(ym))))
+        r_num = M.reduce_sum(M.multiply(xm, ym))
+        r_den = M.sqrt(M.multiply(M.reduce_sum(M.square(xm)), M.reduce_sum(M.square(ym))))
         r = r_num / r_den
-        r = K.maximum(K.minimum(r, 1.0), -1.0)
+        r = M.maximum(M.minimum(r, 1.0), -1.0)
         return 1 - r
 
     # pylint: disable=arguments-differ
-    def train_step(self, data: np.ndarray, distance_on: np.ndarray, batch_size=100, jobs=1,
+    def train_step(self, batch_size: int, data: np.ndarray, distance_on: np.ndarray, jobs=1,
                    chunksize=1):
         """
         Train a single randomized epoch on data and distance_on.
@@ -275,11 +277,10 @@ class ComparativeEncoder(ComparativeModel):
         # It's common to input pandas series from Dataset instead of numpy array
         data = data.to_numpy() if isinstance(data, pd.Series) else data
         distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
-        rng = np.random.default_rng()
-        p1 = rng.permutation(data.shape[0])
+        p1 = self.rng.permutation(data.shape[0])
         x1 = data[p1]
         y1 = distance_on[p1]
-        p2 = rng.permutation(data.shape[0])
+        p2 = self.rng.permutation(data.shape[0])
         x2 = data[p2]
         y2 = distance_on[p2]
 
@@ -370,10 +371,9 @@ class Decoder(ComparativeModel):
         """
         Create a random set of distance data from the inputs.
         """
-        rng = np.random.default_rng()
-        p1 = rng.permutation(distance_on.shape[0])
+        p1 = self.rng.permutation(distance_on.shape[0])
         y1 = distance_on[p1]
-        p2 = rng.permutation(distance_on.shape[0])
+        p2 = self.rng.permutation(distance_on.shape[0])
         y2 = distance_on[p2]
 
         with mp.Pool(jobs) as p:
@@ -389,14 +389,11 @@ class Decoder(ComparativeModel):
             x = np.fromiter((euclidean(*i) for i in zip(x1, x2)), dtype=np.float64)
         return x, y
 
-    def fit(self, *args, **kwargs):
-        pass
-
     @staticmethod
     def load(path: str, v_scope='decoder', **kwargs):
         # pylint: disable=arguments-differ
         contents = os.listdir(path)
-        if 'model.pkl' in contents:
+        if 'model.h5.pkl' in contents:
             return LinearDecoder.load(path)
         return DenseDecoder.load(path, **kwargs)
 
@@ -432,9 +429,9 @@ class LinearDecoder(Decoder):
 
     @classmethod
     def load(cls, path: str, **kwargs):
-        with open(os.path.join(path, 'model.pkl'), 'rb') as f:
+        with open(os.path.join(path, 'model.h5.pkl'), 'rb') as f:
             model = pickle.load(f)
-        return super(Decoder, cls()).load(path, 'decoder', model=model, **kwargs)
+        return super(Decoder, cls).load(path, 'decoder', model=model, **kwargs)
 
 
 class DenseDecoder(Decoder):
@@ -444,16 +441,16 @@ class DenseDecoder(Decoder):
     # pylint: disable=arguments-differ
     def create_model(self):
         dec_input = tf.keras.layers.Input((1,))
-        x = tf.keras.layers.Dense(100, activation='relu')(dec_input)
-        x = tf.keras.layers.Dense(100, activation='relu')(x)
+        x = tf.keras.layers.Dense(10, activation='relu')(dec_input)
+        x = tf.keras.layers.Dense(10, activation='relu')(x)
         x = tf.keras.layers.Dropout(rate=.1)(x)
-        x = tf.keras.layers.Dense(100, activation='relu')(x)
+        x = tf.keras.layers.Dense(10, activation='relu')(x)
         x = tf.keras.layers.Dense(1, activation='relu')(x)
         decoder = tf.keras.Model(inputs=dec_input, outputs=x)
         decoder.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError())
         return decoder
 
-    def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, batch_size=1000, jobs=1,
+    def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, batch_size: int, jobs=1,
                    chunksize=1):
         x, y = self.random_set(encodings, distance_on, jobs=jobs, chunksize=chunksize)
         train_data = tf.data.Dataset.from_tensor_slices((x, y))
@@ -467,7 +464,7 @@ class DenseDecoder(Decoder):
         return self.model.fit(train_data, epochs=1).history
 
     @_run_tf_fn()
-    def transform(self, data: np.ndarray, batch_size=256) -> np.ndarray:
+    def transform(self, data: np.ndarray, batch_size: int) -> np.ndarray:
         """
         Transform the given distances between this model's encodings into predicted true distances.
         """

@@ -19,10 +19,10 @@ from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_percenta
 from .dataset_builder import DatasetBuilder, SILVA_header_parser, COVID_header_parser
 from .visualize import repr_scatterplot
 from .kmers import KMerCounter, Nucleotide_AA
-from .compression import PCA, IPCA, AE, Compressor
+from .kmer_compression import KMerCountPCA, KMerCountIPCA, KMerCountAE, KMerCountCompressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder, Decoder, DenseDecoder, LinearDecoder
-from .distance import Cosine, IncrementalDistance, EditDistance
+from .distance import Cosine, Euclidean, IncrementalDistance, EditDistance, Distance
 
 
 class Pipeline:
@@ -35,11 +35,12 @@ class Pipeline:
         'linear': LinearDecoder
     }
     def __init__(self, model=None, decoder=None, dataset=None, preproc_reprs=None, reprs=None,
-                 quiet=False):
+                 quiet=False, random_seed=None):
         self.model, self.decoder = model, decoder
         self.dataset, self.preproc_reprs, self.reprs = dataset, preproc_reprs, reprs
         self.quiet = quiet
         self.index = None
+        self.rng = np.random.default_rng(seed=random_seed)
 
     def set_decoder(self, decoder, **kwargs):
         """
@@ -69,8 +70,7 @@ class Pipeline:
         """
         Randomly samples the Dataset and all representations down to size. Irreversible.
         """
-        rng = np.random.default_rng()
-        sample = rng.permutation(size)[:size]
+        sample = self.rng.permutation(size)[:size]
         self.dataset = self.dataset.iloc[sample]
         if self.preproc_reprs is not None:
             self.preproc_reprs = self.preproc_reprs[sample]
@@ -78,7 +78,8 @@ class Pipeline:
             self.reprs = self.reprs[sample]
 
     # Subclass must override.
-    def preprocess_seqs(self, seqs) -> np.ndarray:
+    @staticmethod
+    def preprocess_seqs(seqs) -> np.ndarray:
         """
         Preprocesses a list of sequences.
         @param seqs: Sequences to preprocess.
@@ -108,10 +109,13 @@ class Pipeline:
         """
         Fit the decoder based on the model's representations.
         """
+        # Always transform dataset in case encoder has changed.
         if not self.quiet:
             print('Transforming dataset...')
         self.transform_dataset(transform_batch_size)
-        self.decoder.fit(self.reprs, distance_on, epochs=25, **kwargs)
+        if not self.quiet:
+            print("Training Distance Decoder...")
+        self.decoder.fit(self.reprs, distance_on, **kwargs)
 
     def _fit_called_check(self):
         if self.preproc_reprs is None:
@@ -272,12 +276,11 @@ class Pipeline:
         """
         self._reprs_check()
         sample_size = sample_size or len(self.dataset)
-        rng = np.random.default_rng()
-        sample = rng.permutation(len(self.dataset))[:sample_size]
+        sample = self.rng.permutation(len(self.dataset))[:sample_size]
         encs = self.reprs[sample]
         inputs = self.preproc_reprs[sample]
-        p1 = rng.permutation(len(encs))
-        p2 = rng.permutation(len(encs))
+        p1 = self.rng.permutation(len(encs))
+        p2 = self.rng.permutation(len(encs))
         x1, x2 = encs[p1], encs[p2]
         y1, y2 = inputs[p1], inputs[p2]
         if not self.quiet:
@@ -324,71 +327,100 @@ class KMerCountsPipeline(Pipeline):
         if not self.counter:
             raise ValueError('KMerCounter needs to be created before running! \
                              Use create_kmer_counter().')
-        r = np.random.default_rng()
-        sample = r.permutation(len(self.dataset))[:int(len(self.dataset) * fit_sample_frac)]
+        if compressor == 'None' or not compressor:
+            self.compressor = KMerCountCompressor(self.counter, 4 ** self.K_)
+            return
+        elif compressor not in ['PCA', 'IPCA', 'AE']:
+            raise ValueError('Invalid Compressor Provided')
+        sample = self.rng.permutation(len(self.dataset))[:int(len(self.dataset) * fit_sample_frac)]
         sample = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()[sample])
-        postcomp_len = repr_size or 4 ** self.K_ // 10 * 2
+        compress_to = repr_size or 4 ** self.K_ // 10 * 2
         if compressor == 'PCA':
-            self.compressor = PCA(postcomp_len, quiet=self.quiet, **init_args)
+            self.compressor = KMerCountPCA(self.counter, compress_to)
         elif compressor == 'IPCA':
-            self.compressor = IPCA(postcomp_len, quiet=self.quiet, **init_args)
+            self.compressor = KMerCountIPCA(self.counter, compress_to)
         elif compressor == 'AE':
-            self.compressor = AE.auto(sample, postcomp_len, quiet=self.quiet, **init_args)
+            self.compressor = KMerCountAE.auto(self.counter, sample, compress_to, **init_args)
             if not self.quiet:
                 print('AE Compressor Summary:')
                 self.compressor.summary()
-        else:
-            self.compressor = Compressor(postcomp_len := 4 ** self.K_, self.quiet)
         # pylint: disable=unidiomatic-typecheck
         # Strict type check needed here for this conditional
         if self.model is not None and not self.quiet and type(self.compressor) != Compressor:
             print('Creating a compressor after the model is not recommended! Consider running  \
                   create_model again.')
+        print('Fitting compressor...')
         self.compressor.fit(sample)
 
-    def create_model(self, repr_size=2, depth=3, decoder='dense', dist=None, distribute_strategy=None):
+    def create_model(self, repr_size=2, embed_dist='euclidean', depth=3, decoder='linear', dist='cosine',
+            distribute_strategy=None):
         """
         Create a Model for this KMerCountsPipeline. Uses all available GPUs.
         """
+        # Argument validation
         if not self.counter:
             raise ValueError('KMerCounter needs to be created before running! \
                              Use create_kmer_counter().')
-        if not self.compressor:
+        if dist == 'cosine':
+            dist = Cosine(repr_size)
+        elif dist == 'edit':
+            dist = EditDistance(repr_size)
+        elif not isinstance(dist, Distance):
+            raise ValueError('Invalid argument: dist')
+
+        if not self.compressor:  # Create default (blank) compressor if needed
             self.create_compressor('None')
 
-        self.set_decoder(decoder, dist=dist or Cosine(repr_size))
-        builder = ModelBuilder((self.compressor.postcomp_len,),
+        self.set_decoder(decoder, dist=dist)  # Create decoder
+        builder = ModelBuilder((self.compressor.compress_to,),
                                distribute_strategy=distribute_strategy or
                                tf.distribute.MirroredStrategy())
-        builder.dense(self.compressor.postcomp_len, depth=depth)
-        self.model = ComparativeEncoder.from_model_builder(builder, dist=dist or Cosine(repr_size),
-                                                           repr_size=repr_size, quiet=self.quiet)
+        builder.dense(self.compressor.compress_to, depth=depth)
+        self.model = ComparativeEncoder.from_model_builder(builder, dist=dist, repr_size=repr_size,
+                                                           quiet=self.quiet, embed_dist=embed_dist,
+                                                           random_seed=self.rng.integers(2**32))
         if not self.quiet:
             self.model.summary()
 
-    def preprocess_seqs(self, seqs: list[str], batch_size=0) -> np.ndarray:
-        return self.compressor.count_kmers(self.counter, seqs, batch_size)
+    def preprocess_seqs(self, seqs: list[str], **kwargs) -> np.ndarray:
+        return self.compressor.kmer_counts(seqs, **kwargs)
 
-    def fit(self, preproc_batch_size=0, dist_on_preproc=False, incremental_dist=True,
-            batch_size=1000, **kwargs):
+    def fit(self, batch_size: int, jobs=1, chunksize=1, preproc_args=None, dec_args=None, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
         """
         if not self.model:
             self.create_model()
-        unique_inds = super().fit(batch_size=preproc_batch_size)
-        if incremental_dist:
-            self.model.distance = IncrementalDistance(self.model.distance, self.counter)
-            distance_on = self.dataset['seqs'].to_numpy()
-        elif dist_on_preproc:
-            distance_on = self.preproc_reprs
-        else:
-            distance_on = self.counter.kmer_counts(self.dataset['seqs'].to_numpy())
-        self.model.fit(self.preproc_reprs[unique_inds], distance_on=distance_on[unique_inds],
-                       batch_size=batch_size, **kwargs)
-        kwargs = {k:v for k,v in kwargs.items() if k in ['jobs', 'chunksize']}
-        self.fit_decoder(distance_on, batch_size, **kwargs)
+        # Always preprocess since this is necessary for model.
+        unique_inds = super().fit(**(preproc_args or {}))
+        if isinstance(self.model.distance, (Euclidean, Cosine)):  # If k-mer count based distance
+            if type(self.compressor) != KMerCountCompressor:  # If we're compressing
+                # Use an IncrementalDistance to reduce memory usage
+                self.model.distance = IncrementalDistance(self.model.distance, self.counter)
+                self.decoder.distance = IncrementalDistance(self.decoder.distance, self.counter)
+                # IncrementalDistance takes sequences as input
+                distance_on = self.dataset['seqs'].to_numpy()
+            else:  # If using k-mer count based distance and not compressing
+                distance_on = self.preproc_reprs  # Run distance calculation on preproc_reprs
+        else:  # If sequence-based distance
+            distance_on = self.dataset['seqs'].to_numpy()  # Apply on sequences
+        self.model.fit(batch_size, self.preproc_reprs[unique_inds],
+                       distance_on=distance_on[unique_inds], jobs=jobs,
+                       chunksize=chunksize, **kwargs)
+        dec_args = dec_args or {}
+        if 'batch_size' not in dec_args:
+            # Use batch_size for encoder as default since encoder is much more complicated,
+            # so if a batch_size works without issue for the encoder it'll probably be fine
+            # for the decoder.
+            dec_args['batch_size'] = batch_size
+        if 'transform_batch_size' not in dec_args:
+            # Use the encoder's batch_size to transform
+            dec_args['transform_batch_size'] = batch_size
+        if 'epochs' not in dec_args and isinstance(self.decoder, DenseDecoder):
+            # Seems like a sensible number to avoid adding too much overhead
+            dec_args['epochs'] = 25
+        self.fit_decoder(distance_on, jobs=jobs, chunksize=chunksize, **dec_args)
 
     def save(self, savedir: str):
         super().save(savedir)
@@ -410,7 +442,7 @@ class KMerCountsPipeline(Pipeline):
         with open(os.path.join(savedir, 'counter.pkl'), 'rb') as f:
             result['counter'] = pickle.load(f)
         if 'compressor' in contents:
-            result['compressor'] = Compressor.load(os.path.join(savedir, 'compressor'))
+            result['compressor'] = KMerCountCompressor.load(os.path.join(savedir, 'compressor'))
         return result
 
 class SequencePipeline(Pipeline):
@@ -421,7 +453,7 @@ class SequencePipeline(Pipeline):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def create_model(self, res='low', seq_len=.9, repr_size=2):
+    def create_model(self, res='low', seq_len=.9, repr_size=2, **kwargs):
         """
         Create a model for the Pipeline.
         @param res: Resolution of the model's encoding output. Available options are:
@@ -448,13 +480,17 @@ class SequencePipeline(Pipeline):
             seq_len = int(target_zscore * std + mean)
         self.set_decoder('linear', dist=(dist := EditDistance(repr_size)))
         if res == 'low':
-            self.model = self.low_res_model(seq_len, repr_size=repr_size, dist=dist)
+            self.model = self.low_res_model(seq_len, repr_size=repr_size, dist=dist, 
+                                            random_seed=self.rng.integers(2**32), **kwargs)
         elif res == 'medium':
-            self.model = self.medium_res_model(seq_len, repr_size=repr_size, dist=dist)
+            self.model = self.medium_res_model(seq_len, repr_size=repr_size, dist=dist, 
+                                            random_seed=self.rng.integers(2**32), **kwargs)
         elif res == 'high':
-            self.model = self.high_res_model(seq_len, repr_size=repr_size, dist=dist)
+            self.model = self.high_res_model(seq_len, repr_size=repr_size, dist=dist, 
+                                            random_seed=self.rng.integers(2**32), **kwargs)
         elif res == 'ultra':
-            self.model = self.ultra_res_model(seq_len, repr_size=repr_size, dist=dist)
+            self.model = self.ultra_res_model(seq_len, repr_size=repr_size, dist=dist, 
+                                            random_seed=self.rng.integers(2**32), **kwargs)
         if not self.quiet:
             self.model.summary()
 

@@ -19,14 +19,6 @@ class Distance:
     """
     def __init__(self, repr_size: int, sample_size=1000):
         self.repr_size = repr_size
-        rng = np.random.default_rng()
-        a = rng.random((sample_size, repr_size))
-        b = rng.random((sample_size, repr_size))
-        mat = distance_matrix(a, b)
-        dists = mat.flatten()
-        self.enc_space_mean = np.mean(dists)
-        self.enc_space_std = np.std(dists)
-        self.dist_space_mean, self.dist_space_std = None, None
 
     #pylint: disable=unused-argument
     def transform(self, pair: tuple) -> int:
@@ -39,14 +31,11 @@ class Distance:
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
         """
-        Postprocess a full array of distances. Does a basic normalization by default.
+        Postprocess a full array of distances. Does nothing by default.
         @param data: np.ndarray
         @return np.ndarray
         """
-        self.dist_space_mean = np.mean(data)
-        self.dist_space_std = np.std(data)
-        zscores = (data - self.dist_space_mean) / self.dist_space_std
-        return zscores * self.enc_space_std + self.enc_space_mean
+        return data
 
     def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
         """
@@ -54,8 +43,7 @@ class Distance:
         @param data: np.ndarray
         @return np.ndarray
         """
-        zscores = (data - self.enc_space_mean) / self.enc_space_std
-        return zscores * self.dist_space_std + self.dist_space_mean
+        return data
 
 
 class Euclidean(Distance):
@@ -66,28 +54,12 @@ class Euclidean(Distance):
         return sceuclidean(*pair)
 
 
-class EuclideanWithoutNorm(Euclidean):
-    def postprocessor(self, data):
-        return data
-    
-    def invert_postprocessing(self, data):
-        return data
-
-
 class Cosine(Distance):
     """
     Cosine distance implementation.
     """
     def transform(self, pair: tuple) -> int:
         return sccosine(*pair)
-
-
-class CosineWithoutNorm(Cosine):
-    def postprocessor(self, data):
-        return data
-    
-    def invert_postprocessing(self, data):
-        return data
 
 
 class IncrementalDistance(Distance):
@@ -121,7 +93,7 @@ class EditDistance(Distance):
 class SmithWaterman(Distance):
     """
     Normalized alignment distance between two textual DNA sequences. Distance is computed from
-    Smith-Waterman local alignment similarity scores. Unpublished, not recommended unless this
+    Smith-Waterman local alignment similarity scores. Deprecated, not recommended unless this
     legacy functionality is necessary.
     """
     def __init__(self, *args, **kwargs):
@@ -132,8 +104,7 @@ class SmithWaterman(Distance):
         return self.aligner.align(*pair).score / max(map(len, pair))
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
-        data = 1 - data  # Convert similarity scores into distances
-        return super().postprocessor(data)
+        return 1 - super().postprocessor(data)
 
     def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
         return 1 - super().invert_postprocessing(data)
@@ -149,5 +120,4 @@ class CompoundDistance(Distance):
         return DataStructs.TanimotoSimilarity(fp1, fp2)
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
-        data = 1 - data  # Convert similarity scores into distances
-        return super().postprocessor(data)
+        return 1 - super().postprocessor(data)
