@@ -19,10 +19,10 @@ class KMerCounter:
         @param debug: disables multiprocessing to allow better tracebacks.
         """
         self.k = k
-        self.debug = debug
-        self.quiet = quiet
         self.jobs = jobs
         self.chunksize = chunksize
+        self.debug = debug
+        self.quiet = quiet
         alphabet = np.array(['A', 'C', 'G', 'T', 'U'])
         self.alphabet_pattern = re.compile(f'[^{"".join(alphabet)}]')
 
@@ -86,34 +86,35 @@ class KMerCounter:
         # Split given string into parts and take sum of each kmer's total occurrences in each part
         return np.sum([self._seq_to_kmer_counts(i) for i in self._split_str(seq)], axis=0)
 
-    def _apply(self, func: callable, seqs: np.ndarray, silence=False) -> list:
+    def _apply(self, func: callable, seqs: np.ndarray, jobs=None, chunksize=None,
+               silence=False) -> list:
         """
         Avoids duplication of logic for kmer sequence/count generation.
         """
-        if not self.debug:
-            with mp.Pool(self.jobs) as p:
-                it = p.imap(func, seqs, chunksize=self.chunksize) if self.quiet or silence else \
-                    tqdm(p.imap(func, seqs, chunksize=self.chunksize), total=len(seqs))
-                return list(it)
+        jobs = jobs or self.jobs
+        chunksize = chunksize or self.chunksize
+        if not self.debug and jobs > 1:
+            with mp.Pool(jobs) as p:
+                it = p.imap(func, seqs, chunksize=chunksize)
+                return list(it if self.quiet or silence else tqdm(it, total=len(seqs)))
         else:
-            it = seqs if self.quiet else tqdm(seqs)
-            return [func(i) for i in it]
+            return [func(i) for i in (seqs if self.quiet or silence else tqdm(seqs))]
 
-    def kmer_sequences(self, seqs: list[str]) -> list[list[int]]:
+    def kmer_sequences(self, seqs: list[str], **kwargs) -> list[list[int]]:
         """
         Generate kmer sequences for a given array of string sequences.
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         Remember that values of 0 and 1 are also used by keras for pad and OOV tokens! Be sure to
         add 2 before passing in a kmer sequence directly to a model.
         """
-        return self._apply(self.str_to_kmers, seqs)
+        return self._apply(self.str_to_kmers, seqs, **kwargs)
 
-    def kmer_counts(self, seqs: list[str], silence=False) -> np.ndarray:
+    def kmer_counts(self, seqs: list[str], **kwargs) -> np.ndarray:
         """
         Generate kmer counts for a given array of string sequences.
         Sequences do not need to be uniform lengths. Invalid/unknown base pairs will be ignored.
         """
-        return np.array(self._apply(self.str_to_kmer_counts, seqs, silence))
+        return np.array(self._apply(self.str_to_kmer_counts, seqs, **kwargs))
 
 
 class Nucleotide_AA(KMerCounter):

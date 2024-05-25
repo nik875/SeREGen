@@ -1,7 +1,9 @@
 """
 Contains distance metrics used for training ComparativeEncoders.
 """
+import multiprocessing as mp
 import numpy as np
+from tqdm import tqdm
 from scipy.spatial.distance import euclidean as sceuclidean, cosine as sccosine
 from scipy.spatial import distance_matrix
 from Bio.Align import PairwiseAligner
@@ -17,8 +19,11 @@ class Distance:
     Abstract class representing a distance metric for two sequences.
     Downstream subclasses must implement transform.
     """
-    def __init__(self, repr_size: int, sample_size=1000):
+    def __init__(self, repr_size: int, jobs=1, chunksize=1, quiet=False):
         self.repr_size = repr_size
+        self.jobs = jobs
+        self.chunksize = chunksize
+        self.quiet = quiet
 
     #pylint: disable=unused-argument
     def transform(self, pair: tuple) -> int:
@@ -37,6 +42,20 @@ class Distance:
         """
         return data
 
+    def transform_multi(self, y1: np.ndarray, y2: np.ndarray) -> np.ndarray:
+        """
+        Transform two large arrays of data.
+        """
+        if self.jobs == 1:
+            it = tqdm(zip(y1, y2)) if not self.quiet else zip(y1, y2)
+            y = np.fromiter((self.transform(i) for i in it), dtype=np.float64)
+        else:
+            with mp.Pool(self.jobs) as p:
+                it = p.imap(self.transform, zip(y1, y2), chunksize=self.chunksize)
+                y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
+        y = self.postprocessor(y)  # Vectorized transformations are applied here
+        return y
+
     def invert_postprocessing(self, data: np.ndarray) -> np.ndarray:
         """
         Inverts the postprocessing of data to return raw transform results.
@@ -46,36 +65,60 @@ class Distance:
         return data
 
 
-class Euclidean(Distance):
+class VectorizedDistance(Distance):
+    """
+    Distance with a vectorized implementation. Takes advantage of multiprocessing and
+    vectorization. transform() must take in pairs of single elements OR pairs of arrays of elements.
+    """
+    def transform_multi(self, y1, y2):
+        if self.jobs == 1:
+            return self.postprocessor(self.transform((y1, y2)))
+        y1_split = np.array_split(y1, len(y1) // self.chunksize)
+        y2_split = np.array_split(y2, len(y1) // self.chunksize)
+        with mp.Pool(self.jobs) as p:
+            it = p.imap(self.transform, zip(y1_split, y2_split), chunksize=1)
+            y = list(it if self.quiet else tqdm(it, total=len(y1_split)))
+            y = np.concatenate(y)
+        y = self.postprocessor(y)
+        return y
+
+
+class Euclidean(VectorizedDistance):
     """
     Basic Euclidean distance implementation
     """
     def transform(self, pair: tuple) -> int:
-        return sceuclidean(*pair)
+        return np.linalg.norm(pair[0] - pair[1], axis=-1)
 
 
-class Cosine(Distance):
+class Cosine(VectorizedDistance):
     """
     Cosine distance implementation.
     """
     def transform(self, pair: tuple) -> int:
-        return sccosine(*pair)
+        # Subtracting from 1 to convert similarity to distance
+        return 1 - np.sum(pair[0] * pair[1], axis=-1) / (np.linalg.norm(pair[0], axis=-1) *
+                                                         np.linalg.norm(pair[1], axis=-1))
 
 
-class IncrementalDistance(Distance):
+class IncrementalDistance(VectorizedDistance):
     """
     Incrementally applies a regular K-Mers based distance metric over raw sequences.
     Use when not enough memory exists to fully encode a dataset into K-Mers with the specified K.
+    Meant for use with VectorizedDistances. distance must have a transform() that can handle pairs
+    of arrays of elements, and these arrays can have length 1.
     """
-    def __init__(self, distance: Distance, counter: KMerCounter):
+    def __init__(self, distance: VectorizedDistance, counter: KMerCounter):
         super().__init__(distance.repr_size)
         self.distance = distance
         self.counter = counter
+        self.jobs = self.distance.jobs
+        self.chunksize = self.distance.chunksize
 
     def transform(self, pair: tuple) -> int:
-        kmer_pair = self.counter.str_to_kmer_counts(pair[0]), \
-            self.counter.str_to_kmer_counts(pair[1])
-        return self.distance.transform(kmer_pair)
+        pair = [i if isinstance(i, np.ndarray) else np.array([i]) for i in pair]
+        kmer_pair = [self.counter.kmer_counts(i, jobs=1, chunksize=1, silence=True) for i in pair]
+        return self.distance.transform(tuple(kmer_pair))
 
 
 class EditDistance(Distance):

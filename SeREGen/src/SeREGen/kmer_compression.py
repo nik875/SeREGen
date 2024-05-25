@@ -22,7 +22,7 @@ class KMerCountCompressor(KMerCounter):
     _SAVE_EXCLUDE_VARS = []
     def __init__(self, counter: KMerCounter, compress_to: int):
         super().__init__(counter.k, jobs=counter.jobs, chunksize=counter.chunksize,
-                debug=counter.debug, quiet=counter.quiet)
+                         debug=counter.debug, quiet=counter.quiet)
         self.compress_to = compress_to
         self.fit_called = False
 
@@ -60,14 +60,6 @@ class KMerCountCompressor(KMerCounter):
         Load any special variables from the savedir for this object. Called by Compressor.load().
         """
 
-    def _batch_data(self, data: np.ndarray, batch_size=1) -> tuple[np.ndarray, np.ndarray]:
-        batch_size = batch_size if batch_size > 1 else self.chunksize
-        fully_batchable_data = data[:len(data) - len(data) % batch_size]
-        full_batches = np.reshape(fully_batchable_data,
-                                  (-1, batch_size, *fully_batchable_data.shape[1:]))
-        last_batch = data[len(data) - len(data) % batch_size:]
-        return full_batches, last_batch
-
     def fit(self, data: np.ndarray):
         """
         Fit the compressor to the given data.
@@ -75,6 +67,16 @@ class KMerCountCompressor(KMerCounter):
         @param quiet: whether to print output
         """
         self.fit_called = True
+
+    def raw_transform(self, data: np.ndarray) -> np.ndarray:
+        """
+        The most basic transform operation, after kmer counting. Must be implemented.
+        """
+        return data
+
+    def _transform_with_kmer_counts(self, data: np.ndarray) -> np.ndarray:
+        data = self.kmer_counts(data, silence=True, jobs=1, chunksize=1)
+        return self.raw_transform(data)
 
     def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
         # pylint: disable=unused-argument
@@ -96,92 +98,90 @@ class KMerCountCompressor(KMerCounter):
         """
         return data
 
-    def kmer_counts(self, seqs: list[str], chunks_per_it=None) -> np.ndarray:
-        """
-        Counts and compresses KMers in dataset.
-        batches_per_it: allows running counter.kmer_counts on large batches before compressing.
-        """
-        batch_size = self.chunksize * chunks_per_it if chunks_per_it else len(seqs)
-        full_batches, last_batch = self._batch_data(np.array(seqs, dtype=str),
-                                                    batch_size)
-        result = []
-        pbar = self.quiet or chunks_per_it is None
-        for i in (full_batches if pbar else tqdm(full_batches)):
-            counts = super().kmer_counts(i, silence=not pbar or self.quiet)
-            result.append(self.transform(counts, silence=not pbar or self.quiet))
-        if len(last_batch) == 0:
-            return np.concatenate(result)
-        final_kmers = super().kmer_counts(last_batch, silence=True)
-        final_compressed = self.transform(final_kmers, silence=True)
-        return np.concatenate(result + [final_compressed])
 
-
-class KMerCountPCA(KMerCountCompressor):
+class _PCACompressor(KMerCountCompressor):
     """
-    Use PCA to compress input data.
+    Abstract PCA compressor, conserves code.
     """
-    def __init__(self, counter: KMerCounter, n_components: int):
-        super().__init__(counter, n_components)
-        self.pca = SKPCA(n_components=n_components)
+    def __init__(self, pca, *args, jobs=1, chunksize=1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pca = pca
         self.scaler = StandardScaler()
+        self.compress_jobs = jobs
+        self.compress_chunksize = chunksize
+
+    def _batch_data(self, data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        fully_batchable_data = data[:len(data) - len(data) % self.compress_chunksize]
+        full_batches = np.reshape(fully_batchable_data,
+                                  (-1, self.compress_chunksize, *fully_batchable_data.shape[1:]))
+        last_batch = data[len(data) - len(data) % self.compress_chunksize:]
+        return full_batches, last_batch
+
+    def _mp_map_over_batches(self, fn: callable, data: np.ndarray, silence=False) -> np.ndarray:
+        full_batches, last_batch = self._batch_data(data)
+        with mp.Pool(self.compress_jobs) as p:
+            it = p.imap_unordered(fn, full_batches) if self.quiet or silence else tqdm(
+                p.imap_unordered(fn, full_batches), total=len(full_batches))
+            result = list(it)
+        if len(last_batch) > 0:
+            result.append(fn(last_batch))
+        return np.concatenate(result) if len(result) > 0 and isinstance(result[0], np.ndarray) \
+                else result
+
+    def raw_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
+        return self.pca.transform(self.scaler.transform(data))
+
+    def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
+        if isinstance(data[0], str):  # Calling on list of strings
+            data = np.array(data, dtype=object)
+            transform_fn = self._transform_with_kmer_counts
+        else:  # Calling on kmer counts
+            transform_fn = self.raw_transform
+        return self._mp_map_over_batches(transform_fn, data, silence)
+
+    def _raw_inverse_transform(self, data: np.ndarray) -> np.ndarray:
+        return self.scaler.inverse_transform(self.pca.inverse_transform(data))
+
+    def inverse_transform(self, data: np.ndarray, silence=False):
+        return self._mp_map_over_batches(self._raw_inverse_transform, data, silence)
+
+
+class KMerCountPCA(_PCACompressor):
+    """
+    Use PCA to compress input data. Suppoorts parallelization on transform, not fit.
+    """
+    def __init__(self, counter: KMerCounter, n_components: int, **kwargs):
+        pca = SKPCA(n_components=n_components)
+        super().__init__(pca, counter, n_components, **kwargs)
 
     def fit(self, data: np.ndarray):
         super().fit(data)
         self.pca.fit(self.scaler.fit_transform(data))
 
-    def transform(self, data: np.ndarray, silence=False):
-        return self.pca.transform(self.scaler.transform(data))
 
-    def inverse_transform(self, data: np.ndarray, silence=False):
-        return self.pca.inverse_transform(self.scaler.inverse_transform(data))
-
-
-class KMerCountIPCA(KMerCountCompressor):
+class KMerCountIPCA(_PCACompressor):
     """
-    Use PCA to compress the input data. Supports parallelization over multiple CPUs.
+    Use PCA to compress the input data. Supports fit parallelization over multiple CPUs.
     """
-    def __init__(self, counter: KMerCounter, n_components: int):
+    def __init__(self, counter: KMerCounter, n_components: int, **kwargs):
         """
         Uses jobs, chunksize defined by KMerCounter
         """
-        super().__init__(counter, n_components)
-        self.pca = IncrementalPCA(n_components=n_components, batch_size=self.chunksize)
-        self.scaler = StandardScaler()
-
-    def _mp_map_over_batches(self, fn: callable, full_batches: np.ndarray,
-                             silence=False) -> np.ndarray:
-        with mp.Pool(self.jobs) as p:
-            it = p.imap_unordered(fn, full_batches) if self.quiet or silence else tqdm(
-                p.imap_unordered(fn, full_batches), total=len(full_batches))
-            return list(it)
+        super().__init__(None, counter, n_components, **kwargs)
+        self.pca = IncrementalPCA(n_components=n_components, batch_size=self.compress_chunksize)
 
     def fit(self, data: np.ndarray):
         super().fit(data)
         if not self.quiet:
-            print(f'Fitting IPCA Compressor using CPUs: {self.jobs}...')
+            print(f'Fitting IPCA Compressor using CPUs: {self.compress_jobs}...')
         data = self.scaler.fit_transform(data)
         full_batches, last_batch = self._batch_data(data)
         if len(last_batch) < self.compress_to:  # Drop last batch if not enough data
             last_batch = full_batches[-1]
             full_batches = full_batches[:-1]
-        self._mp_map_over_batches(self.pca.partial_fit, full_batches)
+        self._mp_map_over_batches(self.pca.partial_fit, np.concatenate(full_batches))
         # Use normal fit on last batch so sklearn doesn't trigger a fit not called error
         self.pca.fit(last_batch)
-
-    def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
-        data = self.scaler.transform(data)
-        full_batches, last_batch = self._batch_data(data)
-        result = self._mp_map_over_batches(self.pca.transform, full_batches, silence)
-        if len(last_batch) > 0:
-            result.append(self.pca.transform(last_batch))
-        return np.concatenate(result)
-
-    def inverse_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
-        full_batches, last_batch = self._batch_data(data)
-        result = self._mp_map_over_batches(self.pca.inverse_transform, full_batches, silence)
-        if len(last_batch) > 0:
-            result.append(self.pca.inverse_transform(last_batch))
-        return self.scaler.inverse_transform(np.concatenate(result))
 
 
 class KMerCountAE(KMerCountCompressor):
@@ -190,8 +190,8 @@ class KMerCountAE(KMerCountCompressor):
     """
     _SAVE_EXCLUDE_VARS = ['encoder', 'decoder', 'ae']
     def __init__(self, counter: KMerCounter, inputs: tf.keras.layers.Layer, reprs: tf.keras.layers.Layer,
-                 outputs: tf.keras.layers.Layer, repr_size: int, loss='mse', epoch_limit=100, patience=2,
-                 val_split=.1):
+                 outputs: tf.keras.layers.Layer, repr_size: int, batch_size: int, loss='mse',
+                 epoch_limit=100, patience=2, val_split=.1, **kwargs):
         """
         Create an encoder/decoder autoencoder pair.
         Encoder: inputs=inputs, outputs=reprs
@@ -199,7 +199,8 @@ class KMerCountAE(KMerCountCompressor):
         Autoencoder: inputs=inputs, outputs=outputs
         epoch_limit, patience: modify fit() behavior, can be overridden in fit()
         """
-        super().__init__(counter, repr_size)
+        super().__init__(counter, repr_size, **kwargs)
+        self.batch_size = batch_size
         self.encoder = tf.keras.Model(inputs=inputs, outputs=reprs)
         self.decoder = tf.keras.Model(inputs=reprs, outputs=outputs)
         self.ae = tf.keras.Model(inputs=inputs, outputs=outputs)
@@ -251,7 +252,7 @@ class KMerCountAE(KMerCountCompressor):
             print('Training AE Compressor...')
         else:
             tf.keras.utils.disable_interactive_logging()
-        self.ae.fit(data, data, epochs=epoch_limit, batch_size=self.chunksize, callbacks=[
+        self.ae.fit(data, data, epochs=epoch_limit, batch_size=self.batch_size, callbacks=[
             tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience),
         ], validation_split=val_split)
         if self.quiet:
@@ -259,9 +260,9 @@ class KMerCountAE(KMerCountCompressor):
 
     def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
         return self.encoder(data) if self.quiet or silence else \
-            self.encoder.predict(data, batch_size=self.chunksize)
+            self.encoder.predict(data, batch_size=self.batch_size)
 
     def inverse_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
         return self.decoder(data) if self.quiet or silence else \
-            self.decoder.predict(data, batch_size=self.chunksize)
+            self.decoder.predict(data, batch_size=self.batch_size)
 

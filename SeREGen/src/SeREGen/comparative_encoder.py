@@ -6,7 +6,6 @@ import shutil
 import pickle
 import json
 import time
-import multiprocessing as mp
 
 import numpy as np
 import pandas as pd
@@ -14,7 +13,6 @@ from scipy.spatial.distance import euclidean
 from sklearn.linear_model import LinearRegression
 import tensorflow as tf
 import tensorflow.math as M
-from tqdm import tqdm
 
 from .encoders import ModelBuilder
 
@@ -35,6 +33,17 @@ def _run_tf_fn(init_message=None, print_time=False):
             return result
         return fit_output_mgmt
     return fit_dec
+
+
+def _prepare_tf_dataset(x, y, batch_size):
+    dataset = tf.data.Dataset.from_tensor_slices((x, y) if y is not None else x)
+    dataset = dataset.batch(batch_size)
+
+    options = tf.data.Options()
+    options.experimental_distribute.auto_shard_policy = \
+        tf.data.experimental.AutoShardPolicy.DATA
+    dataset = dataset.with_options(options)
+    return dataset
 
 
 class ComparativeModel:
@@ -73,6 +82,11 @@ class ComparativeModel:
         Single epoch of training.
         """
         return {}
+
+    def random_set(self, x: np.ndarray, y: np.ndarray, epoch_factor=1) -> tuple[np.ndarray]:
+        p1 = np.concatenate([self.rng.permutation(x.shape[0]) for _ in range(epoch_factor)])
+        p2 = np.concatenate([self.rng.permutation(x.shape[0]) for _ in range(epoch_factor)])
+        return x[p1], x[p2], y[p1], y[p2]
 
     @_run_tf_fn(print_time=True)
     def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=3, **kwargs):
@@ -183,7 +197,7 @@ class ComparativeEncoder(ComparativeModel):
         """
         properties = {
             'input_shape': model.layers[0].output.shape[1:],
-            'input_dtype': model.layers[0].input_dtype,
+            'input_dtype': model.layers[0].dtype,
             'repr_size': model.layers[-1].output.shape[1],
             'depth': len(model.layers),
         }
@@ -262,8 +276,7 @@ class ComparativeEncoder(ComparativeModel):
         return 1 - r
 
     # pylint: disable=arguments-differ
-    def train_step(self, batch_size: int, data: np.ndarray, distance_on: np.ndarray, jobs=1,
-                   chunksize=1):
+    def train_step(self, batch_size: int, data: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
         """
         Train a single randomized epoch on data and distance_on.
         @param data: data to train model on.
@@ -277,34 +290,16 @@ class ComparativeEncoder(ComparativeModel):
         # It's common to input pandas series from Dataset instead of numpy array
         data = data.to_numpy() if isinstance(data, pd.Series) else data
         distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
-        p1 = self.rng.permutation(data.shape[0])
-        x1 = data[p1]
-        y1 = distance_on[p1]
-        p2 = self.rng.permutation(data.shape[0])
-        x2 = data[p2]
-        y2 = distance_on[p2]
+        x1, x2, y1, y2 = self.random_set(data, distance_on, epoch_factor=epoch_factor)
 
-        if jobs == 1:
-            it = tqdm(zip(y1, y2)) if not self.quiet else zip(y1, y2)
-            y = np.fromiter((self.distance.transform(i) for i in it), dtype=np.float64)
-        else:
-            with mp.Pool(jobs) as p:
-                it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
-                y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
-        y = self.distance.postprocessor(y)  # Vectorized transformations are applied here
+        y = self.distance.transform_multi(y1, y2)
 
-        train_data = tf.data.Dataset.from_tensor_slices(({'input_a': x1, 'input_b': x2}, y))
-        train_data = train_data.batch(batch_size)
-
-        options = tf.data.Options()
-        options.experimental_distribute.auto_shard_policy = \
-            tf.data.experimental.AutoShardPolicy.DATA
-        train_data = train_data.with_options(options)
+        train_data = _prepare_tf_dataset({'input_a': x1, 'input_b': x2}, y, batch_size)
 
         return self.model.fit(train_data, epochs=1).history
 
     def fit(self, *args, distance_on=None, **kwargs):
-        distance_on = distance_on if distance_on is not None else args[0]
+        distance_on = distance_on if distance_on is not None else args[1]
         super().fit(*args, distance_on, **kwargs)
 
     @_run_tf_fn()
@@ -315,13 +310,7 @@ class ComparativeEncoder(ComparativeModel):
         @param batch_size: Batch size for .predict().
         @return np.ndarray: Representations for all sequences in data.
         """
-        dataset = tf.data.Dataset.from_tensor_slices(data)
-        dataset = dataset.batch(batch_size)
-
-        options = tf.data.Options()
-        options.experimental_distribute.auto_shard_policy = \
-            tf.data.experimental.AutoShardPolicy.DATA
-        dataset = dataset.with_options(options)
+        dataset = _prepare_tf_dataset(data, None, batch_size)
         return self.encoder.predict(dataset, batch_size=batch_size)
 
     def save(self, path: str):
@@ -343,21 +332,18 @@ class ComparativeEncoder(ComparativeModel):
 def hyperbolic_distance(a, b):
     """
     Computes hyperbolic distance between two arrays of points in Poincaré ball model.
+    Numpy implementation.
     """
     a = a.astype(np.float64)  # Both arrays must be the same type
     b = b.astype(np.float64)
     eps = np.finfo(np.float64).eps  # Machine epsilon
-    a_norms = np.linalg.norm(a, axis=-1)
-    a = a / (a_norms + eps)  # Add epsilon to avoid div by zero
-    b_norms = np.linalg.norm(b, axis=-1)
-    b = b / (b_norms + eps)
+    sq_norm = lambda v: np.clip(np.sum(v ** 2), eps, 1 - eps)
 
-    norm_a_sq = np.sum(a**2, axis=-1)
-    norm_b_sq = np.sum(b**2, axis=-1)
-    squared_distance = np.sum((a - b)**2, axis=-1)
-    denominator = (1 - norm_a_sq) * (1 - norm_b_sq)
-    term_inside_arcosh = 1 + (2 * squared_distance) / denominator
-    return np.arccosh(term_inside_arcosh)
+    numerator = np.sum((a - b) ** 2, axis=-1)
+    denominator_a = 1 - sq_norm(a)
+    denominator_b = 1 - sq_norm(b)
+    frac = numerator / (denominator_a * denominator_b)
+    return np.arccosh(1 + 2 * frac)
 
 
 class Decoder(ComparativeModel):
@@ -367,27 +353,19 @@ class Decoder(ComparativeModel):
     def __init__(self, v_scope='decoder', **kwargs):
         super().__init__(v_scope, **kwargs)
 
-    def random_set(self, encodings: np.ndarray, distance_on: np.ndarray, jobs=1, chunksize=1):
+    def random_distance_set(self, encodings: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
         """
         Create a random set of distance data from the inputs.
         """
-        p1 = self.rng.permutation(distance_on.shape[0])
-        y1 = distance_on[p1]
-        p2 = self.rng.permutation(distance_on.shape[0])
-        y2 = distance_on[p2]
+        x1, x2, y1, y2 = self.random_set(encodings, distance_on, epoch_factor=epoch_factor)
+        y = self.distance.transform_multi(y1, y2)
 
-        with mp.Pool(jobs) as p:
-            it = p.imap(self.distance.transform, zip(y1, y2), chunksize=chunksize)
-            y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
-        # Do not postprocess distances. The idea is that transform should provide a meaningful
-        # distance, even if the postprocessed distances only have meaning in context of the current
-        # dataset because of normalization.
-        x1, x2 = encodings[p1], encodings[p2]
         if self.embed_dist == 'hyperbolic':
             x = hyperbolic_distance(x1, x2)
         else:
-            x = np.fromiter((euclidean(*i) for i in zip(x1, x2)), dtype=np.float64)
-        return x, y
+            x = np.linalg.norm(x1 - x2, axis=-1)
+        s = self.rng.permutation(x.shape[0])
+        return (x[s] - np.mean(x)) / np.std(x), y[s]
 
     @staticmethod
     def load(path: str, v_scope='decoder', **kwargs):
@@ -413,12 +391,13 @@ class LinearDecoder(Decoder):
     def create_model(self):
         return _LinearRegressionModel()
 
-    def fit(self, encodings: np.ndarray, distance_on: np.ndarray, *args, jobs=1, chunksize=1,
-            **kwargs):
+    def fit(self, encodings: np.ndarray, distance_on: np.ndarray, *args, **kwargs):
         """
         Fit the LinearDecoder to the given data.
         """
-        x, y = self.random_set(encodings, distance_on, jobs=jobs, chunksize=chunksize)
+        # It's common to input pandas series from Dataset instead of numpy array
+        distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
+        x, y = self.random_distance_set(encodings, distance_on, *args, **kwargs)
         self.model.fit(x.reshape((-1, 1)), y)
 
     def transform(self, data: np.ndarray):
@@ -438,6 +417,10 @@ class DenseDecoder(Decoder):
     """
     Decoder model to convert generated distances into true distances.
     """
+    def __init__(self, batch_size: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.batch_size = batch_size
+
     # pylint: disable=arguments-differ
     def create_model(self):
         dec_input = tf.keras.layers.Input((1,))
@@ -450,30 +433,28 @@ class DenseDecoder(Decoder):
         decoder.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError())
         return decoder
 
-    def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, batch_size: int, jobs=1,
-                   chunksize=1):
-        x, y = self.random_set(encodings, distance_on, jobs=jobs, chunksize=chunksize)
-        train_data = tf.data.Dataset.from_tensor_slices((x, y))
-        train_data = train_data.batch(batch_size)
+    def fit(self, *args, epochs=25, **kwargs):
+        """
+        The decoder is probably an afterthought, 25 epochs seems like a sensible default to avoid
+        adding too much overhead.
+        """
+        return super().fit(*args, epochs=epochs, **kwargs)
 
-        options = tf.data.Options()
-        options.experimental_distribute.auto_shard_policy = \
-            tf.data.experimental.AutoShardPolicy.DATA
-        train_data = train_data.with_options(options)
+    def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
+        # It's common to input pandas series from Dataset instead of numpy array
+        distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
+
+        x, y = self.random_distance_set(encodings, distance_on, epoch_factor=epoch_factor)
+        train_data = _prepare_tf_dataset(x, y, self.batch_size)
 
         return self.model.fit(train_data, epochs=1).history
 
     @_run_tf_fn()
-    def transform(self, data: np.ndarray, batch_size: int) -> np.ndarray:
+    def transform(self, data: np.ndarray) -> np.ndarray:
         """
         Transform the given distances between this model's encodings into predicted true distances.
         """
-        dataset = tf.data.Dataset.from_tensor_slices(data)
-        dataset = dataset.batch(batch_size)
-        options = tf.data.Options()
-        options.experimental_distribute.auto_shard_policy = \
-            tf.data.experimental.AutoShardPolicy.OFF
-        dataset = dataset.with_options(options)
+        dataset = _prepare_tf_dataset(data, None, self.batch_size)
         return self.model.predict(dataset)
 
     def summary(self):

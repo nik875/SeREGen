@@ -7,10 +7,10 @@ from .exceptions import IncompatibleDimensionsException
 
 class AttentionBlock(tf.keras.layers.Layer):
     """
-    Custom AttentionBlock layer that also contains dropout and batch normalization.
+    Custom AttentionBlock layer that also contains normalization.
     Similar to the Transformer encoder block.
     """
-    def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
+    def __init__(self, embed_dim, num_heads, ff_dim):
         super().__init__()
         self.att = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
         self.ffn = tf.keras.Sequential(
@@ -18,18 +18,14 @@ class AttentionBlock(tf.keras.layers.Layer):
         )
         self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
         self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
-        self.dropout1 = tf.keras.layers.Dropout(rate)
-        self.dropout2 = tf.keras.layers.Dropout(rate)
 
-    def call(self, inputs, training):
+    def call(self, inputs):
         """
-        Calls attention, dropout, normalization, feed forward, and second normalization layers.
+        Calls attention, normalization, feed forward, and second normalization layers.
         """
         attn_output = self.att(inputs, inputs)
-        attn_output = self.dropout1(attn_output, training=training)
         out1 = self.layernorm1(inputs + attn_output)
         ffn_output = self.ffn(out1)
-        ffn_output = self.dropout2(ffn_output, training=training)
         return self.layernorm2(out1 + ffn_output)
 
 
@@ -83,7 +79,7 @@ class ModelBuilder:
                                vocabulary=vocab,
                                standardize=None,
                                split='character')
-        obj.embedding(len(vocab) + 2, embed_dim, input_length=max_len)
+        obj.embedding(len(vocab) + 2, embed_dim)
         return obj
 
     @_apply_scopes
@@ -94,7 +90,7 @@ class ModelBuilder:
         self.current = tf.keras.layers.TextVectorization(*args, **kwargs)(self.current)
 
     @_apply_scopes
-    def embedding(self, input_dim: int, output_dim: int, mask_zero=True, **kwargs):
+    def embedding(self, input_dim: int, output_dim: int, mask_zero=False, **kwargs):
         """
         Adds an Embedding layer to preprocess ordinally encoded input sequences.
         Arguments are passed directly to Embedding constructor.
@@ -222,17 +218,16 @@ class ModelBuilder:
         self.dense(output_size, activation='relu')
 
     @_apply_scopes
-    def attention(self, num_heads: int, output_size: int, rate=.1):
+    def attention(self, num_heads: int, output_size: int):
         """
         Add an attention layer. Embeddings must be generated beforehand.
         @param num_heads: Number of attention heads.
         @param output_size: Output size.
-        @param rate: Learning rate for AttentionBlock.
+        @param rate: Dropout rate for AttentionBlock.
         """
         if len(self.shape()) != 2:
             raise IncompatibleDimensionsException()
 
-        self.current = AttentionBlock(self.shape()[1], num_heads, output_size,
-                                      rate=rate)(self.current)
+        self.current = AttentionBlock(self.shape()[1], num_heads, output_size)(self.current)
         self.current = tf.keras.layers.BatchNormalization()(self.current)
 
