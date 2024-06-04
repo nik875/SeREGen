@@ -4,11 +4,8 @@ Contains distance metrics used for training ComparativeEncoders.
 import multiprocessing as mp
 import numpy as np
 from tqdm import tqdm
-from scipy.spatial.distance import euclidean as sceuclidean, cosine as sccosine
-from scipy.spatial import distance_matrix
 from Bio.Align import PairwiseAligner
 import Levenshtein
-import py_stringmatching as sm
 from rdkit.Chem import AllChem, DataStructs
 from .kmers import KMerCounter
 
@@ -36,9 +33,9 @@ class Distance:
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
         """
-        Postprocess the output of transform() into a distance. Allows for metrics that don't explicitly
-        calculate distance via postprocessing similarity scores/other results into distance. Must be
-        invertible.
+        Postprocess the output of transform() into a distance. Allows for metrics that don't
+        explicitly calculate distance via postprocessing similarity scores/other results into
+        distance. Must be invertible.
         @param data: np.ndarray
         @return np.ndarray
         """
@@ -49,7 +46,7 @@ class Distance:
         Transform two large arrays of data.
         """
         if self.jobs == 1:
-            it = zip(y1, y2) if self.quiet or silence else tqdm(zip(y1, y2)) 
+            it = zip(y1, y2) if self.quiet or silence else tqdm(zip(y1, y2))
             y = np.fromiter((self.transform(i) for i in it), dtype=np.float64)
         else:
             with mp.Pool(self.jobs) as p:
@@ -115,8 +112,8 @@ class Hyperbolic(VectorizedDistance):
     Computes hyperbolic distance between two arrays of points in Poincaré ball model.
     Numpy implementation.
     """
-    def transform(self, data):
-        a, b = data
+    def transform(self, pair):
+        a, b = pair
         a = a.astype(np.float64)  # Both arrays must be the same type
         b = b.astype(np.float64)
         eps = np.finfo(np.float64).eps  # Machine epsilon
