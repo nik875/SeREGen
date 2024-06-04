@@ -11,10 +11,12 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import euclidean
 from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_percentage_error
 import tensorflow as tf
 import tensorflow.math as M
 
 from .encoders import ModelBuilder
+from .distance import Hyperbolic, Euclidean, Cosine
 
 
 def _run_tf_fn(init_message=None, print_time=False):
@@ -86,6 +88,7 @@ class ComparativeModel:
     def random_set(self, x: np.ndarray, y: np.ndarray, epoch_factor=1) -> tuple[np.ndarray]:
         p1 = np.concatenate([self.rng.permutation(x.shape[0]) for _ in range(epoch_factor)])
         p2 = np.concatenate([self.rng.permutation(x.shape[0]) for _ in range(epoch_factor)])
+        breakpoint()
         return x[p1], x[p2], y[p1], y[p2]
 
     @_run_tf_fn(print_time=True)
@@ -329,51 +332,76 @@ class ComparativeEncoder(ComparativeModel):
         self.encoder.summary()
 
 
-def hyperbolic_distance(a, b):
-    """
-    Computes hyperbolic distance between two arrays of points in Poincaré ball model.
-    Numpy implementation.
-    """
-    a = a.astype(np.float64)  # Both arrays must be the same type
-    b = b.astype(np.float64)
-    eps = np.finfo(np.float64).eps  # Machine epsilon
-    sq_norm = lambda v: np.clip(np.sum(v ** 2), eps, 1 - eps)
-
-    numerator = np.sum((a - b) ** 2, axis=-1)
-    denominator_a = 1 - sq_norm(a)
-    denominator_b = 1 - sq_norm(b)
-    frac = numerator / (denominator_a * denominator_b)
-    return np.arccosh(1 + 2 * frac)
-
-
 class Decoder(ComparativeModel):
     """
     Abstract Decoder for encoding distances.
     """
-    def __init__(self, v_scope='decoder', **kwargs):
+    def __init__(self, v_scope='decoder', embed_dist_args=None, **kwargs):
         super().__init__(v_scope, **kwargs)
+        embed_dist_args = embed_dist_args or {}
+        if self.embed_dist == 'hyperbolic':
+            self.embed_dist_calc = Hyperbolic(**embed_dist_args)
+        elif self.embed_dist == 'euclidean':
+            self.embed_dist_calc = Euclidean(**embed_dist_args)
+        elif self.embed_dist == 'cosine':
+            self.embed_dist_calc = Cosine(**embed_dist_args)
+        else:  # Should never happen
+            raise ValueError(f'Invalid embedding distance for decoder: {self.embed_dist}.')
 
     def random_distance_set(self, encodings: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
         """
         Create a random set of distance data from the inputs.
         """
         x1, x2, y1, y2 = self.random_set(encodings, distance_on, epoch_factor=epoch_factor)
-        y = self.distance.transform_multi(y1, y2)
 
-        if self.embed_dist == 'hyperbolic':
-            x = hyperbolic_distance(x1, x2)
-        else:
-            x = np.linalg.norm(x1 - x2, axis=-1)
-        s = self.rng.permutation(x.shape[0])
-        return (x[s] - np.mean(x)) / np.std(x), y[s]
+        if not self.quiet:
+            print(f'Calculating embedding distances')
+        x = self.embed_dist_calc.transform_multi(x1, x2)
+        if not self.quiet:
+            print('Calculating true distances')
+        y = self.distance.transform_multi(y1, y2)
+        return x, y
+
+    def evaluate(self, encodings: np.ndarray, distance_on: np.ndarray, sample_size=None):
+        """
+        Evaluate the performance of the model by seeing how well we can predict true sequence
+        dissimilarity from encoding distances.
+        @param sample_size: Number of sequences to use for evaluation. All in dataset by default.
+        @return np.ndarray, np.ndarray: predicted distances, true distances
+        """
+        sample_size = sample_size or len(encodings)
+        x, y = self.random_distance_set(encodings, distance_on,
+                                        epoch_factor=int(sample_size / len(encodings))+1)
+        if not self.quiet:
+            print('Predicting true distances...')
+        x = self.transform(x)
+        y = self.distance.invert_postprocessing(y)
+
+        mse = mean_squared_error(y, x)
+        r2 = r2_score(y, x)
+        mape = mean_absolute_percentage_error(y, x)
+        if not self.quiet:
+            print(f'Mean squared error of distances: {mse}')
+            print(f'R-squared correlation coefficient: {r2}')
+            print(f'Mean absolute percentage error: {mape}')
+        return x, y
+
+    def save(self, path: str):
+        super().save(path)
+        with open(os.path.join(path, 'embed_dist_calc.pkl'), 'wb') as f:
+            pickle.dump(self.embed_dist_calc, f)
 
     @staticmethod
     def load(path: str, v_scope='decoder', **kwargs):
         # pylint: disable=arguments-differ
         contents = os.listdir(path)
         if 'model.h5.pkl' in contents:
-            return LinearDecoder.load(path)
-        return DenseDecoder.load(path, **kwargs)
+            obj = LinearDecoder.load(path)
+        else:
+            obj = DenseDecoder.load(path, **kwargs)
+        with open(os.path.join(path, 'embed_dist_calc.pkl'), 'rb') as f:
+            obj.embed_dist_calc = pickle.load(f)
+        return obj
 
 
 class _LinearRegressionModel(LinearRegression):
@@ -404,7 +432,7 @@ class LinearDecoder(Decoder):
         """
         Transform the given data.
         """
-        return self.model.predict(data.reshape(-1, 1))
+        return self.distance.invert_postprocessing(self.model.predict(data.reshape(-1, 1)))
 
     @classmethod
     def load(cls, path: str, **kwargs):
@@ -455,7 +483,7 @@ class DenseDecoder(Decoder):
         Transform the given distances between this model's encodings into predicted true distances.
         """
         dataset = _prepare_tf_dataset(data, None, self.batch_size)
-        return self.model.predict(dataset)
+        return self.distance.invert_postprocessing(self.model.predict(dataset))
 
     def summary(self):
         """

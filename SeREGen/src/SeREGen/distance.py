@@ -19,8 +19,7 @@ class Distance:
     Abstract class representing a distance metric for two sequences.
     Downstream subclasses must implement transform.
     """
-    def __init__(self, repr_size: int, jobs=1, chunksize=1, quiet=False):
-        self.repr_size = repr_size
+    def __init__(self, jobs=1, chunksize=1, quiet=False):
         self.jobs = jobs
         self.chunksize = chunksize
         self.quiet = quiet
@@ -28,7 +27,8 @@ class Distance:
     #pylint: disable=unused-argument
     def transform(self, pair: tuple) -> int:
         """
-        Transform a pair of elements into a single integer distance between those elements.
+        Transform a pair of elements into a single integer distance between those elements. This can
+        return a non-distance score if postprocessor() and invert_postprocessing are implemented.
         @param pair: two-element tuple containing elements to compute distance between.
         @return int: distance value
         """
@@ -36,23 +36,26 @@ class Distance:
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
         """
-        Postprocess a full array of distances. Does nothing by default.
+        Postprocess the output of transform() into a distance. Allows for metrics that don't explicitly
+        calculate distance via postprocessing similarity scores/other results into distance. Must be
+        invertible.
         @param data: np.ndarray
         @return np.ndarray
         """
         return data
 
-    def transform_multi(self, y1: np.ndarray, y2: np.ndarray) -> np.ndarray:
+    def transform_multi(self, y1: np.ndarray, y2: np.ndarray, silence=False) -> np.ndarray:
         """
         Transform two large arrays of data.
         """
         if self.jobs == 1:
-            it = tqdm(zip(y1, y2)) if not self.quiet else zip(y1, y2)
+            it = zip(y1, y2) if self.quiet or silence else tqdm(zip(y1, y2)) 
             y = np.fromiter((self.transform(i) for i in it), dtype=np.float64)
         else:
             with mp.Pool(self.jobs) as p:
                 it = p.imap(self.transform, zip(y1, y2), chunksize=self.chunksize)
-                y = np.fromiter((it if self.quiet else tqdm(it, total=len(y1))), dtype=np.float64)
+                y = np.fromiter((it if self.quiet or silence else tqdm(it, total=len(y1))),
+                                dtype=np.float64)
         y = self.postprocessor(y)  # Vectorized transformations are applied here
         return y
 
@@ -70,14 +73,14 @@ class VectorizedDistance(Distance):
     Distance with a vectorized implementation. Takes advantage of multiprocessing and
     vectorization. transform() must take in pairs of single elements OR pairs of arrays of elements.
     """
-    def transform_multi(self, y1, y2):
+    def transform_multi(self, y1, y2, silence=False):
         if self.jobs == 1:
             return self.postprocessor(self.transform((y1, y2)))
         y1_split = np.array_split(y1, len(y1) // self.chunksize)
         y2_split = np.array_split(y2, len(y1) // self.chunksize)
         with mp.Pool(self.jobs) as p:
             it = p.imap(self.transform, zip(y1_split, y2_split), chunksize=1)
-            y = list(it if self.quiet else tqdm(it, total=len(y1_split)))
+            y = list(it if self.quiet or silence else tqdm(it, total=len(y1_split)))
             y = np.concatenate(y)
         y = self.postprocessor(y)
         return y
@@ -97,8 +100,33 @@ class Cosine(VectorizedDistance):
     """
     def transform(self, pair: tuple) -> int:
         # Subtracting from 1 to convert similarity to distance
-        return 1 - np.sum(pair[0] * pair[1], axis=-1) / (np.linalg.norm(pair[0], axis=-1) *
-                                                         np.linalg.norm(pair[1], axis=-1))
+        return np.sum(pair[0] * pair[1], axis=-1) / (np.linalg.norm(pair[0], axis=-1) *
+                                                     np.linalg.norm(pair[1], axis=-1))
+
+    def postprocessor(self, data):
+        return 1 - super().postprocessor(data)
+
+    def invert_postprocessing(self, data):
+        return 1 - super().invert_postprocessing(data)
+
+
+class Hyperbolic(VectorizedDistance):
+    """
+    Computes hyperbolic distance between two arrays of points in Poincaré ball model.
+    Numpy implementation.
+    """
+    def transform(self, data):
+        a, b = data
+        a = a.astype(np.float64)  # Both arrays must be the same type
+        b = b.astype(np.float64)
+        eps = np.finfo(np.float64).eps  # Machine epsilon
+        sq_norm = lambda v: np.clip(np.sum(v ** 2), eps, 1 - eps)
+
+        numerator = np.sum((a - b) ** 2, axis=-1)
+        denominator_a = 1 - sq_norm(a)
+        denominator_b = 1 - sq_norm(b)
+        frac = numerator / (denominator_a * denominator_b)
+        return np.arccosh(1 + 2 * frac)
 
 
 class IncrementalDistance(VectorizedDistance):
@@ -109,7 +137,7 @@ class IncrementalDistance(VectorizedDistance):
     of arrays of elements, and these arrays can have length 1.
     """
     def __init__(self, distance: VectorizedDistance, counter: KMerCounter):
-        super().__init__(distance.repr_size)
+        super().__init__()
         self.distance = distance
         self.counter = counter
         self.jobs = self.distance.jobs
@@ -164,3 +192,6 @@ class CompoundDistance(Distance):
 
     def postprocessor(self, data: np.ndarray) -> np.ndarray:
         return 1 - super().postprocessor(data)
+
+    def invert_postprocessing(self, data):
+        return 1 - super().invert_postprocessing(data)
