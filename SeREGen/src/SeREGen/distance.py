@@ -46,7 +46,7 @@ class Distance:
         Transform two large arrays of data.
         """
         if self.jobs == 1:
-            it = zip(y1, y2) if self.quiet or silence else tqdm(zip(y1, y2))
+            it = zip(y1, y2) if self.quiet or silence else tqdm(zip(y1, y2), total=len(y1))
             y = np.fromiter((self.transform(i) for i in it), dtype=np.float64)
         else:
             with mp.Pool(self.jobs) as p:

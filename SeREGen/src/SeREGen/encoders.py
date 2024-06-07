@@ -29,6 +29,10 @@ class AttentionBlock(tf.keras.layers.Layer):
         return self.layernorm2(out1 + ffn_output)
 
 
+def _one_hot_encoding(x, depth: int, **kwargs):
+    return tf.one_hot(tf.cast(x, tf.int32), depth=depth, **kwargs)
+
+
 class ModelBuilder:
     """
     Class that helps easily build encoders for a ComparativeEncoder model.
@@ -90,6 +94,15 @@ class ModelBuilder:
         self.current = tf.keras.layers.TextVectorization(*args, **kwargs)(self.current)
 
     @_apply_scopes
+    def one_hot_encoding(self, depth: int, **kwargs):
+        """
+        Add one hot encoding for the input. Input must be ordinally encoded data. Input will be
+        casted to int32. Calls tf.one_hot().
+        @param depth: number of categories to encode.
+        """
+        self.current = _one_hot_encoding(self.current, depth, **kwargs)
+
+    @_apply_scopes
     def embedding(self, input_dim: int, output_dim: int, mask_zero=False, **kwargs):
         """
         Adds an Embedding layer to preprocess ordinally encoded input sequences.
@@ -114,24 +127,46 @@ class ModelBuilder:
         """
         return tuple(self.current.shape[1:])
 
-    class DynamicNormScalingLayer(tf.keras.layers.Layer):
+    @_apply_scopes
+    def clip_norm(self, clip_norm, **kwargs):
+        self.current = tf.clip_by_norm(self.current, clip_norm=clip_norm, **kwargs)
+
+    @_apply_scopes
+    def div_by_magnitude(self, axis=-1, **kwargs):
+        # min_scale = 1e-7
+        # max_scale = 1 - 1e-3
+        # radius = tf.Variable(1e-2, trainable=True, name='radius')
+        # normalized_embeddings = tf.nn.l2_normalize(self.current, axis=axis, **kwargs)
+        # self.current = normalized_embeddings * tf.clip_by_value(radius, min_scale, max_scale)
+        magnitudes = tf.norm(self.current, axis=axis, keepdims=True, **kwargs)
+        self.current = self.current / tf.maximum(magnitudes, tf.keras.backend.epsilon())
+
+    @_apply_scopes
+    def dynamic_norm_scaling(self, axis=-1, **kwargs):
         """
         Scale down the input such that the maximum absolute value is 1.
         """
-        def __call__(self, inputs):
-            return inputs / tf.reduce_max(tf.norm(inputs, axis=-1))
+        self.current = self.current / tf.reduce_max(tf.norm(self.current, axis=axis, **kwargs))
 
     @_apply_scopes
-    def compile(self, repr_size=2, embed_space='euclidean') -> tf.keras.Model:
+    def compile(self, repr_size=None, embed_space='euclidean', norm_type='clip') -> tf.keras.Model:
         """
         Create and return an encoder model.
         @param repr_size: Number of dimensions of output point (default 2 for visualization).
         @return tf.keras.Model
         """
-        self.flatten()
-        self.dense(repr_size, activation=None)  # Create special output layer
+        if repr_size:
+            self.flatten()
+            self.dense(repr_size, activation=None)  # Create special output layer
         if embed_space == 'hyperbolic':
-            self.custom_layer(self.DynamicNormScalingLayer())
+            if norm_type == 'clip':
+                self.clip_norm(1)
+            elif norm_type == 'div_by_magnitude':
+                self.div_by_magnitude()
+            elif norm_type == 'scale_down':
+                self.dynamic_norm_scaling()
+            else:
+                print('WARN: Empty/invalid norm_type, compiling hyperbolic model without normalization...')
         return tf.keras.Model(inputs=self.inputs, outputs=self.current)
 
     @_apply_scopes

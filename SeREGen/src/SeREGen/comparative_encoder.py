@@ -48,6 +48,57 @@ def _prepare_tf_dataset(x, y, batch_size):
     return dataset
 
 
+class _NormalizedDistanceLayer(tf.keras.layers.Layer):
+    """
+    Adds a scaling parameter that's set to 1 / average distance on the first iteration.
+    """
+    def __init__(self, init_scaling=True, **kwargs):
+        super().__init__(**kwargs)
+        self.scaling_param = self.add_weight(
+            shape=(),
+            initializer=tf.keras.initializers.Ones(),
+            trainable=True,
+            name="scaling_param"
+        )
+        self.scaling_initialized = tf.Variable(not init_scaling, trainable=False)
+
+    def norm(self, dists):
+        """
+        Normalize the distances with scaling and set scaling if first time.
+        """
+        if not self.scaling_initialized:
+            self.scaling_param.assign(1 / tf.reduce_mean(dists))
+            self.scaling_initialized.assign(True)
+        return dists * (self.scaling_param + tf.keras.backend.epsilon())
+
+
+class EuclideanDistanceLayer(_NormalizedDistanceLayer):
+    """
+    This layer computes the distance between its two prior layers.
+    """
+    def call(self, a, b):
+        return self.norm(tf.reduce_sum(tf.square(a - b), -1))
+
+
+class HyperbolicDistanceLayer(_NormalizedDistanceLayer):
+    def call(self, a, b):
+        """
+        Computes hyperbolic distance in Poincaré ball model.
+        """
+        # Partially adapted from https://github.com/kousun12/tf_hyperbolic
+        sq_norm = lambda v: tf.clip_by_value(
+            tf.reduce_sum(v ** 2, axis=-1),
+            clip_value_min=tf.keras.backend.epsilon(),
+            clip_value_max=1 - tf.keras.backend.epsilon()
+        )
+        numerator = tf.reduce_sum(tf.pow(a - b, 2), axis=-1)
+        denominator_a = 1 - sq_norm(a)
+        denominator_b = 1 - sq_norm(b)
+        frac = 1 + 2 * numerator / (denominator_a * denominator_b)
+        hyperbolic_distance = tf.math.acosh(frac) + tf.keras.backend.epsilon()
+        return self.norm(hyperbolic_distance)
+
+
 class ComparativeModel:
     """
     Abstract ComparativeModel class. Stores some useful common functions.
@@ -207,62 +258,41 @@ class ComparativeEncoder(ComparativeModel):
         self.encoder = model
         super().__init__(v_scope, properties=properties, **kwargs)
 
-    def create_model(self, loss='corr_coef'):
+    def create_model(self, loss='mse'):
         inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
                                        dtype=self.properties['input_dtype'])
         inputb = tf.keras.layers.Input(self.properties['input_shape'], name='input_b',
                                        dtype=self.properties['input_dtype'])
         # Set embedding distance calculation layer
         if self.embed_dist.lower() == 'euclidean':
-            dist_cl = self.EuclideanDistanceLayer()
+            dist_cl = EuclideanDistanceLayer()
         elif self.embed_dist.lower() == 'hyperbolic':
-            dist_cl = self.HyperbolicDistanceLayer()
+            dist_cl = HyperbolicDistanceLayer(init_scaling=True)
         else:
             raise ValueError('Invalid embedding distance provided!')
         distances = dist_cl(
             self.encoder(inputa),
             self.encoder(inputb),
         )
-        loss_kwargs = {'loss': 'mse', 'metrics': ['mae']} if loss == 'mse' else \
-            {'loss': self.correlation_coefficient_loss}
+        if loss == 'mse':
+            loss_kwargs = {'loss': 'mse', 'metrics': ['mae']}
+        elif loss == 'corr_coef':
+            loss_kwargs = {'loss': self.correlation_coefficient_loss}
+        else:
+            loss_kwargs = {'loss': loss}
         comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
         comparative_model.compile(optimizer='adam', **loss_kwargs)
         return comparative_model
 
     @classmethod
-    def from_model_builder(cls, builder: ModelBuilder, repr_size=None, **kwargs):
+    def from_model_builder(cls, builder: ModelBuilder, repr_size=None, norm_type='clip', embed_dist='euclidean',
+                           **kwargs):
         """
         Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
-        distribute strategy and variable scope.
+        distribute strategy and variable scope. Also automatically adds a clip_norm for hyperbolic.
         """
-        encoder = builder.compile(repr_size=repr_size) if repr_size else builder.compile()
-        return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, **kwargs)
-
-    @staticmethod
-    class EuclideanDistanceLayer(tf.keras.layers.Layer):
-        """
-        This layer computes the distance between its two prior layers.
-        """
-        def call(self, a, b):
-            return tf.reduce_sum(tf.square(a - b), -1)
-
-    @staticmethod
-    class HyperbolicDistanceLayer(tf.keras.layers.Layer):
-        def call(self, a, b):
-            """
-            Computes hyperbolic distance in Poincaré ball model.
-            """
-            # Partially adapted from https://github.com/kousun12/tf_hyperbolic
-            sq_norm = lambda v: tf.clip_by_value(
-                tf.reduce_sum(v ** 2),
-                clip_value_min=tf.keras.backend.epsilon(),
-                clip_value_max=1 - tf.keras.backend.epsilon()
-            )
-            numerator = tf.reduce_sum(tf.pow(a - b, 2), axis=-1)
-            denominator_a = 1 - sq_norm(a)
-            denominator_b = 1 - sq_norm(b)
-            frac = numerator / (denominator_a * denominator_b)
-            return tf.math.acosh(1 + 2 * frac)
+        encoder = builder.compile(repr_size=repr_size, norm_type=norm_type, embed_space=embed_dist)
+        return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, embed_dist=embed_dist, **kwargs)
 
     @staticmethod
     def correlation_coefficient_loss(y_true, y_pred):
@@ -412,8 +442,7 @@ class _LinearRegressionModel(LinearRegression):
 
 class LinearDecoder(Decoder):
     """
-    Linear model of a decoder. Far more efficient and useful in cases where ComparativeEncoder
-    achives very low loss values.
+    Linear model of a decoder. Useful with correlation coefficient loss.
     """
     # pylint: disable=arguments-differ
     def create_model(self):
