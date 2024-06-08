@@ -49,7 +49,7 @@ class Pipeline:
         self.decoder = decoder if isinstance(decoder, Decoder) else \
             self.AVAILABLE_DECODERS[decoder](*args, **kwargs)
 
-    def load_dataset(self, paths: list[str], header_parser='None', trim_to=0):
+    def load_dataset(self, paths: list[str], header_parser='None', trim_to=0, max_rows=None):
         """
         Load a dataset into memory from a list of FASTA files.
         """
@@ -61,7 +61,7 @@ class Pipeline:
             builder = DatasetBuilder(COVID_header_parser)
         else:
             builder = DatasetBuilder()
-        self.dataset = builder.from_fasta(paths)
+        self.dataset = builder.from_fasta(paths, max_rows=max_rows)
         self.dataset.replace_unknown_nucls()
         if trim_to:
             self.dataset.trim_seqs(trim_to)

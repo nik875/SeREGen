@@ -6,6 +6,7 @@ import shutil
 import pickle
 import json
 import time
+import math
 
 import numpy as np
 import pandas as pd
@@ -168,7 +169,11 @@ class ComparativeModel:
                 continue
             prev_best = min(self.history['loss'][:-1])
             this_loss = self.history['loss'][-1]
-            if this_loss < prev_best - min_delta:
+            if math.isnan(this_loss):  # NaN detection
+                print('Stopping due to numerical instability, divergence to NaN')
+                self.model.set_weights(best_weights)
+                break
+            if this_loss < prev_best - min_delta:  # Early stopping
                 best_weights = self.model.get_weights()
                 wait = 0
             else:

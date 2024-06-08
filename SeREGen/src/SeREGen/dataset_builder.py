@@ -109,7 +109,7 @@ class DatasetBuilder:
                 return cls_type
         return DatasetDecorated
 
-    def from_fasta(self, paths: list[str]):
+    def from_fasta(self, paths: list[str], max_rows=None):
         """
         Factory function that builds a dataset from a fasta file. Reads in all sequences from all
         fasta files in list.
@@ -121,8 +121,8 @@ class DatasetBuilder:
             headers, s = self._read_fasta(i)
             raw_headers.append(headers)
             seqs.append(s)
-        raw_headers = np.concatenate(raw_headers)
-        seqs = np.concatenate(seqs)
+        raw_headers = np.concatenate(raw_headers)[:max_rows or -1]
+        seqs = np.concatenate(seqs)[:max_rows or -1]
         labels = self.header_parser(raw_headers) if self.header_parser else None
         cls = self._dataset_decorator(type(labels)) if labels is not None else Dataset
         return cls({'orig_seqs': seqs, 'seqs': seqs, 'raw_headers': raw_headers, 'labels': labels})
