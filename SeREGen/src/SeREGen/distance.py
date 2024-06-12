@@ -117,7 +117,7 @@ class Hyperbolic(VectorizedDistance):  # TODO: KNOWN TO GIVE DIFFERENT RESULTS T
         a = a.astype(np.float64)  # Both arrays must be the same type
         b = b.astype(np.float64)
         eps = np.finfo(np.float64).eps  # Machine epsilon
-        sq_norm = lambda v: np.clip(np.sum(v ** 2), eps, 1 - eps)
+        sq_norm = lambda v: np.clip(np.sum(v ** 2, axis=-1), eps, 1 - eps)
 
         numerator = np.sum((a - b) ** 2, axis=-1)
         denominator_a = 1 - sq_norm(a)

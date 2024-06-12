@@ -52,8 +52,9 @@ def _prepare_tf_dataset(x, y, batch_size):
 class _NormalizedDistanceLayer(tf.keras.layers.Layer):
     """
     Adds a scaling parameter that's set to 1 / average distance on the first iteration.
+    Output WILL be normalized.
     """
-    def __init__(self, init_scaling=True, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.scaling_param = self.add_weight(
             shape=(),
@@ -61,7 +62,7 @@ class _NormalizedDistanceLayer(tf.keras.layers.Layer):
             trainable=True,
             name="scaling_param"
         )
-        self.init_scaling = tf.Variable(not init_scaling, trainable=False)
+        self.init_scaling = tf.Variable(False, trainable=False)
 
     def norm(self, dists):
         """
@@ -416,8 +417,7 @@ class Decoder(ComparativeModel):
 
         if not self.quiet:
             print(f'Calculating embedding distances')
-        #x = self.embed_dist_calc.transform_multi(x1, x2)
-        x = HyperbolicDistanceLayer()(x1, x2).numpy()
+        x = self.embed_dist_calc.transform_multi(x1, x2)
         if not self.quiet:
             print('Calculating true distances')
         y = self.distance.transform_multi(y1, y2)
