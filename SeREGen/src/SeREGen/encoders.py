@@ -5,13 +5,19 @@ import tensorflow as tf
 from .exceptions import IncompatibleDimensionsException
 
 
+@tf.keras.utils.register_keras_serializable()
 class AttentionBlock(tf.keras.layers.Layer):
     """
     Custom AttentionBlock layer that also contains normalization.
     Similar to the Transformer encoder block.
     """
-    def __init__(self, embed_dim, num_heads, ff_dim):
-        super().__init__()
+    def __init__(self, embed_dim, num_heads, ff_dim, **kwargs):
+        super().__init__(**kwargs)
+        self.config = {
+            'embed_dim': embed_dim,
+            'num_heads': num_heads,
+            'ff_dim': ff_dim
+        }
         self.att = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
         self.ffn = tf.keras.Sequential(
             [tf.keras.layers.Dense(ff_dim, activation="relu"), tf.keras.layers.Dense(embed_dim)]
@@ -27,6 +33,10 @@ class AttentionBlock(tf.keras.layers.Layer):
         out1 = self.layernorm1(inputs + attn_output)
         ffn_output = self.ffn(out1)
         return self.layernorm2(out1 + ffn_output)
+
+    def get_config(self):
+        return {**super().get_config(), **self.config}
+
 
 
 def _one_hot_encoding(x, depth: int, **kwargs):
@@ -127,29 +137,53 @@ class ModelBuilder:
         """
         return tuple(self.current.shape[1:])
 
-    @_apply_scopes
-    def clip_norm(self, clip_norm, **kwargs):
-        self.current = tf.clip_by_norm(self.current, clip_norm=clip_norm, **kwargs)
+    @tf.keras.utils.register_keras_serializable()
+    class ClipNorm(tf.keras.layers.Layer):
+        def __init__(self, clip_norm, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.clip_norm = clip_norm
 
-    @_apply_scopes
-    def div_by_magnitude(self, axis=-1, **kwargs):
-        # min_scale = 1e-7
-        # max_scale = 1 - 1e-3
-        # radius = tf.Variable(1e-2, trainable=True, name='radius')
-        # normalized_embeddings = tf.nn.l2_normalize(self.current, axis=axis, **kwargs)
-        # self.current = normalized_embeddings * tf.clip_by_value(radius, min_scale, max_scale)
-        magnitudes = tf.norm(self.current, axis=axis, keepdims=True, **kwargs)
-        self.current = self.current / tf.maximum(magnitudes, tf.keras.backend.epsilon())
+        def call(self, x):
+            return tf.clip_by_norm(x, clip_norm=self.clip_norm)
 
-    @_apply_scopes
-    def dynamic_norm_scaling(self, axis=-1, **kwargs):
+        def get_config(self):
+            base_config = super().get_config()
+            config = {"clip_norm": self.clip_norm}
+            return {**base_config, **config}
+
+    @tf.keras.utils.register_keras_serializable()
+    class SoftClipNorm(tf.keras.layers.Layer):
+        def __init__(self, scale=1.0, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.scale = scale
+        
+        def call(self, x):
+            norm = tf.norm(x, axis=-1, keepdims=True)
+            scaled_norm = self.scale * norm
+            soft_clip_factor = tf.tanh(scaled_norm) / scaled_norm
+            return x * soft_clip_factor
+
+        def get_config(self):
+            base_config = super().get_config()
+            config = {"scale": self.scale}
+            return {**base_config, **config}
+
+
+    @tf.keras.utils.register_keras_serializable()
+    class L2Normalize(tf.keras.layers.Layer):
+        def call(self, x):
+            return tf.math.l2_normalize(x, axis=-1, epsilon=tf.keras.backend.epsilon())
+
+    @tf.keras.utils.register_keras_serializable()
+    class DynamicNormScaling(tf.keras.layers.Layer):
         """
         Scale down the input such that the maximum absolute value is 1.
         """
-        self.current = self.current / tf.reduce_max(tf.norm(self.current, axis=axis, **kwargs))
+        def call(self, x):
+            return x / tf.reduce_max(tf.norm(x, axis=-1))
 
     @_apply_scopes
-    def compile(self, repr_size=None, embed_space='euclidean', norm_type='clip') -> tf.keras.Model:
+    def compile(self, repr_size=None, embed_space='euclidean', norm_type='soft_clip') -> tf.keras.Model:
         """
         Create and return an encoder model.
         @param repr_size: Number of dimensions of output point (default 2 for visualization).
@@ -160,11 +194,13 @@ class ModelBuilder:
             self.dense(repr_size, activation=None)  # Create special output layer
         if embed_space == 'hyperbolic':
             if norm_type == 'clip':
-                self.clip_norm(1)
-            elif norm_type == 'div_by_magnitude':
-                self.div_by_magnitude()
+                self.custom_layer(self.ClipNorm(1))
+            elif norm_type == 'soft_clip':
+                self.custom_layer(self.SoftClipNorm(1))
             elif norm_type == 'scale_down':
-                self.dynamic_norm_scaling()
+                self.custom_layer(self.DynamicNormScaling())
+            elif norm_type == 'l2':
+                self.custom_layer(self.L2Normalize())
             else:
                 print('WARN: Empty/invalid norm_type, compiling hyperbolic model without normalization...')
         return tf.keras.Model(inputs=self.inputs, outputs=self.current)

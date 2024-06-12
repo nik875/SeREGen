@@ -107,7 +107,7 @@ class Cosine(VectorizedDistance):
         return 1 - super().invert_postprocessing(data)
 
 
-class Hyperbolic(VectorizedDistance):
+class Hyperbolic(VectorizedDistance):  # TODO: KNOWN TO GIVE DIFFERENT RESULTS TO TF IMPL
     """
     Computes hyperbolic distance between two arrays of points in Poincaré ball model.
     Numpy implementation.

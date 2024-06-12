@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import euclidean
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_percentage_error
+from sklearn.metrics import mean_squared_error, r2_score
 import tensorflow as tf
 import tensorflow.math as M
 
@@ -61,16 +61,16 @@ class _NormalizedDistanceLayer(tf.keras.layers.Layer):
             trainable=True,
             name="scaling_param"
         )
-        self.scaling_initialized = tf.Variable(not init_scaling, trainable=False)
+        self.init_scaling = tf.Variable(not init_scaling, trainable=False)
 
     def norm(self, dists):
         """
         Normalize the distances with scaling and set scaling if first time.
         """
-        if not self.scaling_initialized:
+        if not self.init_scaling:
             self.scaling_param.assign(1 / tf.reduce_mean(dists))
-            self.scaling_initialized.assign(True)
-        return dists * (self.scaling_param + tf.keras.backend.epsilon())
+            self.init_scaling.assign(True)
+        return dists * self.scaling_param
 
 
 class EuclideanDistanceLayer(_NormalizedDistanceLayer):
@@ -95,8 +95,8 @@ class HyperbolicDistanceLayer(_NormalizedDistanceLayer):
         numerator = tf.reduce_sum(tf.pow(a - b, 2), axis=-1)
         denominator_a = 1 - sq_norm(a)
         denominator_b = 1 - sq_norm(b)
-        frac = 1 + 2 * numerator / (denominator_a * denominator_b)
-        hyperbolic_distance = tf.math.acosh(frac) + tf.keras.backend.epsilon()
+        frac = numerator / (denominator_a * denominator_b)
+        hyperbolic_distance = tf.math.acosh(1 + 2 * frac)
         return self.norm(hyperbolic_distance)
 
 
@@ -140,20 +140,33 @@ class ComparativeModel:
     def random_set(self, x: np.ndarray, y: np.ndarray, epoch_factor=1) -> tuple[np.ndarray]:
         p1 = np.concatenate([self.rng.permutation(x.shape[0]) for _ in range(epoch_factor)])
         p2 = np.concatenate([self.rng.permutation(x.shape[0]) for _ in range(epoch_factor)])
-        breakpoint()
         return x[p1], x[p2], y[p1], y[p2]
 
+    def first_epoch(self, *args, lr=.1, **kwargs):
+        """
+        In the first epoch, modify only the scaling parameter with a higher LR.
+        """
+        orig_lr = self.model.optimizer.learning_rate
+        self.model.optimizer.learning_rate.assign(lr)
+        history = self.train_step(*args, **kwargs)
+        self.model.optimizer.learning_rate.assign(orig_lr)
+
     @_run_tf_fn(print_time=True)
-    def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=3, **kwargs):
+    def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=3, first_ep_lr=.1,
+            fast_first_ep=False, **kwargs):
         """
         Train the model based on the given parameters. Extra arguments are passed to train_step.
         @param epochs: epochs to train for.
         @param min_delta: Minimum change required to qualify as an improvement.
         @param patience: How many epochs with no improvement before giving up. patience=0 disables.
+        @param first_ep_lr: Learning rate for first epoch, when scaling param is being trained.
         """
         patience = patience or epochs + 1  # If patience==0, do not early stop
         if patience < 1:
             raise ValueError('Patience value must be >1.')
+        if fast_first_ep:
+            print('Running fast first epoch...')
+            self.first_epoch(*args, lr=first_ep_lr, **kwargs)
         wait = 0
         best_weights = self.model.get_weights()
         for i in range(epochs):
@@ -263,7 +276,7 @@ class ComparativeEncoder(ComparativeModel):
         self.encoder = model
         super().__init__(v_scope, properties=properties, **kwargs)
 
-    def create_model(self, loss='mse'):
+    def create_model(self, loss='corr_coef', lr=.001, **kwargs):
         inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
                                        dtype=self.properties['input_dtype'])
         inputb = tf.keras.layers.Input(self.properties['input_shape'], name='input_b',
@@ -272,7 +285,7 @@ class ComparativeEncoder(ComparativeModel):
         if self.embed_dist.lower() == 'euclidean':
             dist_cl = EuclideanDistanceLayer()
         elif self.embed_dist.lower() == 'hyperbolic':
-            dist_cl = HyperbolicDistanceLayer(init_scaling=True)
+            dist_cl = HyperbolicDistanceLayer()
         else:
             raise ValueError('Invalid embedding distance provided!')
         distances = dist_cl(
@@ -283,15 +296,18 @@ class ComparativeEncoder(ComparativeModel):
             loss_kwargs = {'loss': 'mse', 'metrics': ['mae']}
         elif loss == 'corr_coef':
             loss_kwargs = {'loss': self.correlation_coefficient_loss}
+        elif loss == 'r2':
+            loss_kwargs = {'loss': self.r2_loss}
         else:
             loss_kwargs = {'loss': loss}
         comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
-        comparative_model.compile(optimizer='adam', **loss_kwargs)
+        optim = tf.keras.optimizers.Adam(learning_rate=lr)
+        comparative_model.compile(optimizer=optim, **loss_kwargs, **kwargs)
         return comparative_model
 
     @classmethod
-    def from_model_builder(cls, builder: ModelBuilder, repr_size=None, norm_type='clip', embed_dist='euclidean',
-                           **kwargs):
+    def from_model_builder(cls, builder: ModelBuilder, repr_size=None, norm_type='soft_clip',
+                           embed_dist='euclidean', **kwargs):
         """
         Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
         distribute strategy and variable scope. Also automatically adds a clip_norm for hyperbolic.
@@ -312,6 +328,15 @@ class ComparativeEncoder(ComparativeModel):
         r = r_num / r_den
         r = M.maximum(M.minimum(r, 1.0), -1.0)
         return 1 - r
+
+    @staticmethod
+    def r2_loss(y_true, y_pred):
+        """
+        Pearson's R^2 correlation, retaining the sign of the original R.
+        """
+        r = 1 - ComparativeEncoder.correlation_coefficient_loss(y_true, y_pred)
+        r2 = r ** 2 * (r / tf.math.abs(r))
+        return 1 - r2
 
     # pylint: disable=arguments-differ
     def train_step(self, batch_size: int, data: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
@@ -391,7 +416,8 @@ class Decoder(ComparativeModel):
 
         if not self.quiet:
             print(f'Calculating embedding distances')
-        x = self.embed_dist_calc.transform_multi(x1, x2)
+        #x = self.embed_dist_calc.transform_multi(x1, x2)
+        x = HyperbolicDistanceLayer()(x1, x2).numpy()
         if not self.quiet:
             print('Calculating true distances')
         y = self.distance.transform_multi(y1, y2)
@@ -402,7 +428,7 @@ class Decoder(ComparativeModel):
         Evaluate the performance of the model by seeing how well we can predict true sequence
         dissimilarity from encoding distances.
         @param sample_size: Number of sequences to use for evaluation. All in dataset by default.
-        @return np.ndarray, np.ndarray: predicted distances, true distances
+        @return np.ndarray, np.ndarray: true distances, predicted distances
         """
         sample_size = sample_size or len(encodings)
         x, y = self.random_distance_set(encodings, distance_on,
@@ -412,14 +438,12 @@ class Decoder(ComparativeModel):
         x = self.transform(x)
         y = self.distance.invert_postprocessing(y)
 
-        mse = mean_squared_error(y, x)
         r2 = r2_score(y, x)
-        mape = mean_absolute_percentage_error(y, x)
+        mse = mean_squared_error(y, x)
         if not self.quiet:
             print(f'Mean squared error of distances: {mse}')
             print(f'R-squared correlation coefficient: {r2}')
-            print(f'Mean absolute percentage error: {mape}')
-        return x, y
+        return y, x
 
     def save(self, path: str):
         super().save(path)
