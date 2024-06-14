@@ -62,15 +62,11 @@ class _NormalizedDistanceLayer(tf.keras.layers.Layer):
             trainable=True,
             name="scaling_param"
         )
-        self.init_scaling = tf.Variable(False, trainable=False)
 
     def norm(self, dists):
         """
         Normalize the distances with scaling and set scaling if first time.
         """
-        if not self.init_scaling:
-            self.scaling_param.assign(1 / tf.reduce_mean(dists))
-            self.init_scaling.assign(True)
         return dists * self.scaling_param
 
 
@@ -516,7 +512,7 @@ class DenseDecoder(Decoder):
         x = tf.keras.layers.Dense(10, activation='relu')(x)
         x = tf.keras.layers.Dense(1, activation='relu')(x)
         decoder = tf.keras.Model(inputs=dec_input, outputs=x)
-        decoder.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError())
+        decoder.compile(optimizer='adam', loss='mse')
         return decoder
 
     def fit(self, *args, epochs=25, **kwargs):
@@ -529,10 +525,8 @@ class DenseDecoder(Decoder):
     def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
         # It's common to input pandas series from Dataset instead of numpy array
         distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
-
         x, y = self.random_distance_set(encodings, distance_on, epoch_factor=epoch_factor)
         train_data = _prepare_tf_dataset(x, y, self.batch_size)
-
         return self.model.fit(train_data, epochs=1).history
 
     @_run_tf_fn()

@@ -38,9 +38,21 @@ class AttentionBlock(tf.keras.layers.Layer):
         return {**super().get_config(), **self.config}
 
 
+@tf.keras.utils.register_keras_serializable()
+class OneHotEncoding(tf.keras.layers.Layer):
+    """
+    One hot encoding as a layer. Casts input to integers.
+    """
+    def __init__(self, depth: int, ohe_kwargs=None, **kwargs):
+        self.depth = depth
+        self.ohe_kwargs = ohe_kwargs or {}
+        super().__init__(**kwargs)
 
-def _one_hot_encoding(x, depth: int, **kwargs):
-    return tf.one_hot(tf.cast(x, tf.int32), depth=depth, **kwargs)
+    def call(self, inputs):
+        return tf.one_hot(tf.cast(inputs, tf.int32), depth=self.depth, **self.ohe_kwargs)
+
+    def get_config(self):
+        return {**super().get_config(), 'depth': self.depth, 'ohe_kwargs': self.ohe_kwargs}
 
 
 class ModelBuilder:
@@ -110,7 +122,7 @@ class ModelBuilder:
         casted to int32. Calls tf.one_hot().
         @param depth: number of categories to encode.
         """
-        self.current = _one_hot_encoding(self.current, depth, **kwargs)
+        self.current = OneHotEncoding(depth, ohe_kwargs=kwargs or {})(self.current)
 
     @_apply_scopes
     def embedding(self, input_dim: int, output_dim: int, mask_zero=False, **kwargs):
