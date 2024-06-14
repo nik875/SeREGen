@@ -45,7 +45,7 @@ class Distance:
         """
         Transform two large arrays of data.
         """
-        if self.jobs == 1:
+        if self.jobs == 1 or len(y1) < self.chunksize:
             it = zip(y1, y2) if self.quiet or silence else tqdm(zip(y1, y2), total=len(y1))
             y = np.fromiter((self.transform(i) for i in it), dtype=np.float64)
         else:
@@ -71,7 +71,7 @@ class VectorizedDistance(Distance):
     vectorization. transform() must take in pairs of single elements OR pairs of arrays of elements.
     """
     def transform_multi(self, y1, y2, silence=False):
-        if self.jobs == 1:
+        if self.jobs == 1 or len(y1) < self.chunksize:
             return self.postprocessor(self.transform((y1, y2)))
         y1_split = np.array_split(y1, len(y1) // self.chunksize)
         y2_split = np.array_split(y2, len(y1) // self.chunksize)

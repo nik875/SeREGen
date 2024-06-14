@@ -394,7 +394,7 @@ class KMerCountsPipeline(Pipeline):
     def preprocess_seqs(self, seqs: list[str], **kwargs) -> np.ndarray:
         return self.compressor.transform(seqs, **kwargs)
 
-    def fit(self, batch_size: int, preproc_args=None, dec_args=None, **kwargs):
+    def fit(self, batch_size: int, preproc_args=None, dec_args=None, epoch_factor=1, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -418,8 +418,8 @@ class KMerCountsPipeline(Pipeline):
             distance_on = self.dataset['seqs'].to_numpy()
 
         self.model.fit(batch_size, self.preproc_reprs[unique_inds],
-                       distance_on=distance_on[unique_inds], **kwargs)
-        self._fit_decoder(dec_args, batch_size, distance_on)
+                       distance_on=distance_on[unique_inds], epoch_factor=epoch_factor, **kwargs)
+        self._fit_decoder(dec_args, batch_size, distance_on, epoch_factor=epoch_factor)
 
 
     def save(self, savedir: str):
@@ -583,7 +583,7 @@ class SequencePipeline(Pipeline):
         model = ComparativeEncoder.from_model_builder(builder, **kwargs)
         return model
 
-    def fit(self, batch_size=256, dec_args=None, **kwargs):
+    def fit(self, batch_size=256, dec_args=None, epoch_factor=1, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -593,8 +593,9 @@ class SequencePipeline(Pipeline):
             self.create_model()
         unique_inds = super().fit()
 
-        self.model.fit(batch_size, self.preproc_reprs[unique_inds], **kwargs)
-        self._fit_decoder(dec_args, batch_size, self.preproc_reprs)
+        self.model.fit(batch_size, self.preproc_reprs[unique_inds], epoch_factor=epoch_factor,
+                       **kwargs)
+        self._fit_decoder(dec_args, batch_size, self.preproc_reprs, epoch_factor=epoch_factor)
 
     @classmethod
     def load(cls, *args, **kwargs):
