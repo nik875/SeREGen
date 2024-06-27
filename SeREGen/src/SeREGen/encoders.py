@@ -195,7 +195,7 @@ class ModelBuilder:
             return x / tf.reduce_max(tf.norm(x, axis=-1))
 
     @_apply_scopes
-    def compile(self, repr_size=None, embed_space='euclidean', norm_type='soft_clip') -> tf.keras.Model:
+    def compile(self, repr_size=None, embed_space='euclidean', norm_type='soft_clip', name='encoder', **kwargs):
         """
         Create and return an encoder model.
         @param repr_size: Number of dimensions of output point (default 2 for visualization).
@@ -215,7 +215,7 @@ class ModelBuilder:
                 self.custom_layer(self.L2Normalize())
             else:
                 print('WARN: Empty/invalid norm_type, compiling hyperbolic model without normalization...')
-        return tf.keras.Model(inputs=self.inputs, outputs=self.current)
+        return tf.keras.Model(inputs=self.inputs, outputs=self.current, name=name, **kwargs)
 
     @_apply_scopes
     def custom_layer(self, layer: tf.keras.layers.Layer):

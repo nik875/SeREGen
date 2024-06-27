@@ -55,7 +55,7 @@ class _NormalizedDistanceLayer(tf.keras.layers.Layer):
     Output WILL be normalized.
     """
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(name='dist', **kwargs)
         self.scaling_param = self.add_weight(
             shape=(),
             initializer=tf.keras.initializers.Ones(),
@@ -68,6 +68,9 @@ class _NormalizedDistanceLayer(tf.keras.layers.Layer):
         Normalize the distances with scaling and set scaling if first time.
         """
         return dists * self.scaling_param
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0], 1
 
 
 class EuclideanDistanceLayer(_NormalizedDistanceLayer):
@@ -149,8 +152,7 @@ class ComparativeModel:
         self.model.optimizer.learning_rate.assign(orig_lr)
 
     @_run_tf_fn(print_time=True)
-    def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=3, first_ep_lr=.1,
-            fast_first_ep=False, **kwargs):
+    def fit(self, *args, epochs=100, early_stop=True, min_delta=0, patience=3, first_ep_lr=0, **kwargs):
         """
         Train the model based on the given parameters. Extra arguments are passed to train_step.
         @param epochs: epochs to train for.
@@ -161,7 +163,7 @@ class ComparativeModel:
         patience = patience or epochs + 1  # If patience==0, do not early stop
         if patience < 1:
             raise ValueError('Patience value must be >1.')
-        if fast_first_ep:
+        if first_ep_lr:
             print('Running fast first epoch...')
             self.first_epoch(*args, lr=first_ep_lr, **kwargs)
         wait = 0
@@ -220,6 +222,8 @@ class ComparativeModel:
         if self.history:
             with open(os.path.join(path, 'history.json'), 'w') as f:
                 json.dump(self.history, f)
+        with open(os.path.join(path, 'properties.json'), 'w') as f:
+            json.dump(self.properties, f)
 
     @classmethod
     def load(cls, path: str, v_scope: str, strategy=None, model=None, **kwargs):
@@ -251,27 +255,32 @@ class ComparativeModel:
         if 'history.json' in contents:
             with open(os.path.join(path, 'history.json'), 'r') as f:
                 history = json.load(f)
+        properties = None
+        if 'properties.json' in contents:
+            with open(os.path.join(path, 'properties.json'), 'w') as f:
+                properties = json.load(f)
         return cls(v_scope=v_scope, dist=dist, model=model, strategy=strategy, history=history,
-                   embed_dist=embed_dist, **kwargs)
+                   embed_dist=embed_dist, properties=properties, **kwargs)
 
 
 class ComparativeEncoder(ComparativeModel):
     """
     Generic comparative encoder that can fit to data and transform sequences.
     """
-    def __init__(self, model: tf.keras.Model, v_scope='encoder', **kwargs):
+    def __init__(self, model: tf.keras.Model, v_scope='encoder', reg_dims=False, properties=None, **kwargs):
         """
         @param encoder: TensorFlow model that must support .train() and .predict() at minimum.
         @param dist: distance metric to use when comparing two sequences.
         """
-        properties = {
+        default_properties = {
             'input_shape': model.layers[0].output.shape[1:],
             'input_dtype': model.layers[0].dtype,
             'repr_size': model.layers[-1].output.shape[1],
             'depth': len(model.layers),
+            'reg_dims': reg_dims
         }
         self.encoder = model
-        super().__init__(v_scope, properties=properties, **kwargs)
+        super().__init__(v_scope, properties=properties or default_properties, **kwargs)
 
     def create_model(self, loss='corr_coef', lr=.001, **kwargs):
         inputa = tf.keras.layers.Input(self.properties['input_shape'], name='input_a',
@@ -285,21 +294,23 @@ class ComparativeEncoder(ComparativeModel):
             dist_cl = HyperbolicDistanceLayer()
         else:
             raise ValueError('Invalid embedding distance provided!')
-        distances = dist_cl(
-            self.encoder(inputa),
-            self.encoder(inputb),
-        )
-        if loss == 'mse':
-            loss_kwargs = {'loss': 'mse', 'metrics': ['mae']}
-        elif loss == 'corr_coef':
-            loss_kwargs = {'loss': self.correlation_coefficient_loss}
+        encodera, encoderb = self.encoder(inputa), self.encoder(inputb)
+        distances = dist_cl(encodera, encoderb)
+        if loss == 'corr_coef':
+            losses = {'dist': self.correlation_coefficient_loss}
         elif loss == 'r2':
-            loss_kwargs = {'loss': self.r2_loss}
+            losses = {'dist': self.r2_loss}
         else:
-            loss_kwargs = {'loss': loss}
-        comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=distances)
+            losses = {'dist': loss}
+        outputs = [distances]
+
+        if self.properties['reg_dims']:
+            losses['encoder'] = self.reg_loss
+            outputs.append(encodera)
+
+        comparative_model = tf.keras.Model(inputs=[inputa, inputb], outputs=outputs)
         optim = tf.keras.optimizers.Adam(learning_rate=lr)
-        comparative_model.compile(optimizer=optim, **loss_kwargs, **kwargs)
+        comparative_model.compile(optimizer=optim, loss=losses, **kwargs)
         return comparative_model
 
     @classmethod
@@ -311,6 +322,37 @@ class ComparativeEncoder(ComparativeModel):
         """
         encoder = builder.compile(repr_size=repr_size, norm_type=norm_type, embed_space=embed_dist)
         return cls(encoder, strategy=builder.strategy, v_scope=builder.v_scope, embed_dist=embed_dist, **kwargs)
+
+    @staticmethod
+    def reg_loss(y_true, y_pred):
+        # # Calculate the variance of each dimension across the batch
+        # variances = tf.math.reduce_variance(y_pred, axis=0)
+        # # Calculate the mean squared difference between each dimension's variance and the mean variance
+        # reg_score = tf.reduce_mean(tf.square(variances - tf.reduce_mean(variances)))
+        # return 1 / (reg_score + tf.keras.backend.epsilon())
+        # Assuming y_pred is a batch of vectors
+        batch_size = tf.shape(y_pred)[0]
+        num_columns = tf.shape(y_pred)[1]
+    
+        # Calculate the absolute values of the columns
+        abs_columns = tf.abs(y_pred)
+    
+        # Calculate the mean of each column
+        column_means = tf.reduce_mean(abs_columns, axis=0)
+    
+        # Apply a continuous function to the column means
+        # Here, we use the exponential function e^(-x)
+        # This function approaches 1 as x approaches 0 and decreases towards 0 as x increases
+        exp_column_means = tf.exp(-column_means)
+    
+        # Calculate the average of the exponential column means
+        avg_exp_column_means = tf.reduce_mean(exp_column_means)
+    
+        # Subtract the average from 1 to get the loss
+        # (we want to maximize the average, so we minimize 1 - average)
+        loss = 1.0 - avg_exp_column_means
+    
+        return loss
 
     @staticmethod
     def correlation_coefficient_loss(y_true, y_pred):
@@ -353,6 +395,11 @@ class ComparativeEncoder(ComparativeModel):
         x1, x2, y1, y2 = self.random_set(data, distance_on, epoch_factor=epoch_factor)
 
         y = self.distance.transform_multi(y1, y2)
+        if self.properties['reg_dims']:
+            y = {
+                'dist': y,
+                'encoder': np.zeros((len(y), self.properties['repr_size']))
+            }
 
         train_data = _prepare_tf_dataset({'input_a': x1, 'input_b': x2}, y, batch_size)
 
