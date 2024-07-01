@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "SeREGen"
-version = "0.0.12"
+version = "0.1.0"
 authors = [
   { name="Nikhil Kalidasu", email="srikarnikhil.kalidasu@gmail.com" }
 ]
@@ -19,14 +19,17 @@ classifiers = [
 dependencies = [
     "numpy>=1.21.2",
     "tqdm>=4.64.2",
-    "tensorflow>=2.9.1",
+    "pytorch>=2.3.1",
+    "torchtext>=0.17.0",
+    "torchinfo>=1.8.0",
     "scikit-learn>=1.3.0",
     "matplotlib>=3.4.3",
     "biopython>=1.79",
     "pandas>=1.3.3",
     "scipy>=1.10.1",
     "rdkit>=2023.3.3",
-    "Levenshtein>=0.25.1"
+    "Levenshtein>=0.25.1",
+    "geomstats>=2.7.0",
 ]
 
 [project.urls]

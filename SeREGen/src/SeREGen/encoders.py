@@ -1,92 +1,182 @@
 """
 Module to help build encoders for ComparativeEncoder. It is recommended to use ModelBuilder.
 """
-import tensorflow as tf
-from .exceptions import IncompatibleDimensionsException
+import string
+import random
+import os
 
 
-@tf.keras.utils.register_keras_serializable()
-class AttentionBlock(tf.keras.layers.Layer):
+import torch
+from torch import nn
+from torchtext.data.utils import get_tokenizer
+from torchtext.vocab import build_vocab_from_iterator
+from torchinfo import summary
+
+
+class IncompatibleDimensionsException(Exception):
+    def __init__(self):
+        self.message = "Previous layer shape is incompatible with this layer's shape!"
+        super().__init__(self.message)
+
+
+class _CustomLayer(nn.Module):
+    """
+    Handles saving and loading of layers.
+    """
+
+    def __init__(self, **config):
+        self.config = config
+
+    def __repr__(self):
+        kwargs = ', '.join(f"{k}={v}" for k, v in self.config.items())
+        return f"{self.__class__.__name__}({kwargs})"
+
+
+class AttentionBlock(_CustomLayer):
     """
     Custom AttentionBlock layer that also contains normalization.
     Similar to the Transformer encoder block.
     """
-    def __init__(self, embed_dim, num_heads, ff_dim, **kwargs):
-        super().__init__(**kwargs)
-        self.config = {
-            'embed_dim': embed_dim,
-            'num_heads': num_heads,
-            'ff_dim': ff_dim
-        }
-        self.att = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
-        self.ffn = tf.keras.Sequential(
-            [tf.keras.layers.Dense(ff_dim, activation="relu"), tf.keras.layers.Dense(embed_dim)]
-        )
-        self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
-        self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
 
-    def call(self, inputs):
+    def __init__(self, embed_dim, num_heads, ff_dim):
+        super().__init__(embed_dim=embed_dim, num_heads=num_heads, ff_dim=ff_dim)
+        self.att = nn.MultiheadAttention(embed_dim, num_heads)
+        self.ffn = nn.Sequential(
+            nn.Linear(embed_dim, ff_dim),
+            nn.ReLU(),
+            nn.Linear(ff_dim, embed_dim)
+        )
+        self.layernorm1 = nn.LayerNorm(embed_dim)
+        self.layernorm2 = nn.LayerNorm(embed_dim)
+
+    def forward(self, inputs):
         """
         Calls attention, normalization, feed forward, and second normalization layers.
         """
-        attn_output = self.att(inputs, inputs)
-        out1 = self.layernorm1(inputs + attn_output)
+        attn_output, _ = self.att(inputs, inputs, inputs)
+        out1 = self.layernorm1(inputs + attn_output)  # Skip connection
         ffn_output = self.ffn(out1)
         return self.layernorm2(out1 + ffn_output)
 
-    def get_config(self):
-        return {**super().get_config(), **self.config}
 
-
-@tf.keras.utils.register_keras_serializable()
-class OneHotEncoding(tf.keras.layers.Layer):
+class OneHotEncoding(_CustomLayer):
     """
     One hot encoding as a layer. Casts input to integers.
     """
-    def __init__(self, depth: int, ohe_kwargs=None, **kwargs):
-        self.depth = depth
-        self.ohe_kwargs = ohe_kwargs or {}
-        super().__init__(**kwargs)
 
-    def call(self, inputs):
-        return tf.one_hot(tf.cast(inputs, tf.int32), depth=self.depth, **self.ohe_kwargs)
+    def __init__(self, depth: int):
+        super().__init__(depth=depth)
 
-    def get_config(self):
-        return {**super().get_config(), 'depth': self.depth, 'ohe_kwargs': self.ohe_kwargs}
+    def forward(self, inputs):
+        return nn.functional.one_hot(inputs.to(torch.int64), num_classes=self.config['depth'])
+
+
+class TextVectorizer(_CustomLayer):
+    """
+    Convert input text into ordinally encoded tokens, then vector embeddings.
+    """
+
+    def __init__(self, vocab: list[str], embed_dim: int,
+                 max_len: int, embeddings=True):
+        super().__init__(vocab=str(vocab), embed_dim=embed_dim, max_len=max_len,
+                         embeddings=embeddings)
+        self.tokenizer = get_tokenizer(list)
+        self.vocab = build_vocab_from_iterator(vocab, specials=['<unk>', '<pad>'])
+        self.vocab.set_default_index(self.vocab['<unk>'])
+        self.embedding = nn.Embedding(len(self.vocab), embed_dim,
+                                      padding_idx=self.vocab['<pad>']) if embeddings else None
+
+    def forward(self, text):
+        if isinstance(text, str):
+            text = [text]
+        # Tokenize all texts at once
+        tokens = [self.tokenizer(t) for t in text]
+        # Convert tokens to indices
+        indices = [torch.tensor([self.vocab[token] for token in t],
+                                dtype=torch.long) for t in tokens]
+        # Pad sequences
+        padded = nn.utils.rnn.pad_sequence(indices, batch_first=True, padding_value=self.pad_idx)
+
+        # Truncate to max_len if needed
+        if padded.size(1) > self.max_len:
+            padded = padded[:, :self.max_len]
+
+        if self.embedding is not None:
+            padded = self.embedding(padded)
+        return padded
+
+
+class ClipNorm(_CustomLayer):
+    def __init__(self, clip_norm):
+        super().__init__(clip_norm=clip_norm)
+
+    def forward(self, x):
+        return nn.utils.clip_grad_norm(x, max_norm=self.clip_norm)
+
+
+class SoftClipNorm(_CustomLayer):
+    def __init__(self, scale=1.0):
+        super().__init__(scale=scale)
+
+    def forward(self, x):
+        norm = torch.norm(x, dim=-1, keepdims=True)
+        scaled_norm = self.scale * norm
+        soft_clip_factor = torch.tanh(scaled_norm) / scaled_norm
+        return x * soft_clip_factor
+
+
+class L2Normalize(_CustomLayer):
+    def __init__(self, dim=-1, eps=1e-8):
+        super().__init__(dim=dim, eps=eps)
+        self.radius = nn.Parameter(torch.Tensor([1e-2]), requires_grad=True)
+
+    def forward(self, x):
+        min_scale = 1e-7
+        max_scale = 1 - 1e3
+        normalized = nn.functional.normalize(x, p=2, dim=self.dim, eps=self.eps)
+        scaled = normalized * self.radius.clamp(min=min_scale, max=max_scale)
+        return scaled
+
+
+class DynamicNormScaling(_CustomLayer):
+    """
+    Scale down the input such that the maximum absolute value is 1.
+    """
+
+    def forward(self, x):
+        return x / torch.norm(x, dim=-1).max()
+
+
+class Transpose(_CustomLayer):
+    """
+    Transpose the input over given axes.
+    """
+
+    def __init__(self, dim0: int, dim1: int):
+        super().__init__(dim0=dim0, dim1=dim1)
+
+    def forward(self, x):
+        return x.transpose(self.config['dim0'] + 1, self.config['dim1'] + 1)
 
 
 class ModelBuilder:
     """
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
-    def __init__(self, input_shape: tuple, input_dtype=None, distribute_strategy=None,
-                 v_scope='encoder'):
+
+    def __init__(self, input_shape: tuple, input_dtype=None):
         """
         Create a new ModelBuilder object.
         @param input_shape: Shape of model input.
         @param input_dtype: Optional dtype for model input.
-        @param distribute_strategy: strategy to use for distributed training. Defaults to training
         on a single GPU.
         """
-        self.strategy = distribute_strategy or tf.distribute.get_strategy()
-        self.v_scope = v_scope
-        with tf.name_scope(v_scope):
-            with self.strategy.scope():
-                self.inputs = tf.keras.layers.Input(input_shape, dtype=input_dtype)
-        self.current = self.inputs
-
-    # pylint: disable=no-self-argument,not-callable
-    def _apply_scopes(fn):
-        def in_scopes(self, *args, **kwargs):
-            __doc__ = fn.__doc__  # Set the documentation
-            with tf.name_scope(self.v_scope):
-                with self.strategy.scope():
-                    return fn(self, *args, **kwargs)
-        return in_scopes
+        self.input_shape = input_shape
+        self.input_dtype = input_dtype or torch.float32
+        self.layers = nn.ModuleList()
 
     @classmethod
-    def text_input(cls, vocab: list[str], embed_dim: int, max_len: int, v_scope='encoder',
-                   **kwargs):
+    def text_input(cls, vocab: list[str], embed_dim: int, max_len: int, embeddings=True, **kwargs):
         """
         Factory function that returns a new ModelBuilder object which can receive text input. Adds a
         TextVectorization and an Embedding layer to preprocess string input data. Split happens
@@ -99,184 +189,140 @@ class ModelBuilder:
         @param max_len: Length to trim and pad input sequences to.
         @return ModelBuilder: Newly created object.
         """
-        obj = cls((1,), input_dtype=tf.string, v_scope=v_scope, **kwargs)
-        obj.text_vectorization(output_sequence_length=max_len,
-                               output_mode='int',
-                               vocabulary=vocab,
-                               standardize=None,
-                               split='character')
-        obj.embedding(len(vocab) + 2, embed_dim)
+        obj = cls((1,), input_dtype=torch.long, **kwargs)
+        obj.text_vectorization(vocab, embed_dim, max_len, embeddings=embeddings)
         return obj
 
-    @_apply_scopes
     def text_vectorization(self, *args, **kwargs):
         """
-        Passes arguments directly to TextVectorization layer.
+        Passes arguments directly to TextVectorizer module.
         """
-        self.current = tf.keras.layers.TextVectorization(*args, **kwargs)(self.current)
+        self.layers.append(TextVectorizer(*args, **kwargs))
 
-    @_apply_scopes
     def one_hot_encoding(self, depth: int, **kwargs):
         """
         Add one hot encoding for the input. Input must be ordinally encoded data. Input will be
-        casted to int32. Calls tf.one_hot().
+        casted to int32.
         @param depth: number of categories to encode.
         """
-        self.current = OneHotEncoding(depth, ohe_kwargs=kwargs or {})(self.current)
+        self.layers.append(OneHotEncoding(depth, **kwargs))
 
-    @_apply_scopes
-    def embedding(self, input_dim: int, output_dim: int, mask_zero=False, **kwargs):
+    def embedding(self, input_dim: int, output_dim: int, padding_idx=None, **kwargs):
         """
         Adds an Embedding layer to preprocess ordinally encoded input sequences.
         Arguments are passed directly to Embedding constructor.
         @param input_dim: Each input character must range from [0, input_dim).
         @param output_dim: Size of encoding for each character in the sequences.
-        @param mask_zero: Whether to generate a mask for zero values in the input. Defaults to True.
+        @param padding_idx: Index of padding token. Defaults to None.
         """
-        self.current = tf.keras.layers.Embedding(input_dim, output_dim,
-                                                 mask_zero=mask_zero,
-                                                 **kwargs)(self.current)
+        self.layers.append(nn.Embedding(input_dim, output_dim, padding_idx=padding_idx, **kwargs))
 
     def summary(self):
         """
         Display a summary of the model as it currently stands.
         """
-        tf.keras.Model(inputs=self.inputs, outputs=self.current).summary()
+        model = nn.Sequential(*self.layers)
+        summary(model, input_size=(-1, *self.input_shape), dtypes=[self.input_dtype])
 
     def shape(self) -> tuple:
         """
         Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size
         """
-        return tuple(self.current.shape[1:])
+        with torch.no_grad():
+            if self.input_dtype == torch.string:
+                # For text input, create a random string
+                x = [''.join(random.choices(string.ascii_lowercase, k=10))]
+            else:
+                x = torch.randn(1, *self.input_shape).to(self.input_dtype)
 
-    @tf.keras.utils.register_keras_serializable()
-    class ClipNorm(tf.keras.layers.Layer):
-        def __init__(self, clip_norm, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.clip_norm = clip_norm
+            for layer in self.layers:
+                x = layer(x)
+        return tuple(x.shape[1:])
 
-        def call(self, x):
-            return tf.clip_by_norm(x, clip_norm=self.clip_norm)
-
-        def get_config(self):
-            base_config = super().get_config()
-            config = {"clip_norm": self.clip_norm}
-            return {**base_config, **config}
-
-    @tf.keras.utils.register_keras_serializable()
-    class SoftClipNorm(tf.keras.layers.Layer):
-        def __init__(self, scale=1.0, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.scale = scale
-        
-        def call(self, x):
-            norm = tf.norm(x, axis=-1, keepdims=True)
-            scaled_norm = self.scale * norm
-            soft_clip_factor = tf.tanh(scaled_norm) / scaled_norm
-            return x * soft_clip_factor
-
-        def get_config(self):
-            base_config = super().get_config()
-            config = {"scale": self.scale}
-            return {**base_config, **config}
-
-
-    @tf.keras.utils.register_keras_serializable()
-    class L2Normalize(tf.keras.layers.Layer):
-        def call(self, x):
-            return tf.math.l2_normalize(x, axis=-1, epsilon=tf.keras.backend.epsilon())
-
-    @tf.keras.utils.register_keras_serializable()
-    class DynamicNormScaling(tf.keras.layers.Layer):
-        """
-        Scale down the input such that the maximum absolute value is 1.
-        """
-        def call(self, x):
-            return x / tf.reduce_max(tf.norm(x, axis=-1))
-
-    @_apply_scopes
-    def compile(self, repr_size=None, embed_space='euclidean', norm_type='soft_clip', name='encoder', **kwargs):
+    def compile(self, repr_size=None, embed_space='euclidean',
+                norm_type='soft_clip', name='encoder'):
         """
         Create and return an encoder model.
         @param repr_size: Number of dimensions of output point (default 2 for visualization).
-        @return tf.keras.Model
+        @return nn.Module
         """
         if repr_size:
             self.flatten()
             self.dense(repr_size, activation=None)  # Create special output layer
         if embed_space == 'hyperbolic':
             if norm_type == 'clip':
-                self.custom_layer(self.ClipNorm(1))
+                self.custom_layer(ClipNorm(1))
             elif norm_type == 'soft_clip':
-                self.custom_layer(self.SoftClipNorm(1))
+                self.custom_layer(SoftClipNorm(1))
             elif norm_type == 'scale_down':
-                self.custom_layer(self.DynamicNormScaling())
+                self.custom_layer(DynamicNormScaling())
             elif norm_type == 'l2':
-                self.custom_layer(self.L2Normalize())
+                self.custom_layer(L2Normalize())
             else:
-                print('WARN: Empty/invalid norm_type, compiling hyperbolic model without normalization...')
-        return tf.keras.Model(inputs=self.inputs, outputs=self.current, name=name, **kwargs)
+                print('WARN: Empty/invalid norm_type, compiling hyperbolic model without ' +
+                      'normalization...')
 
-    @_apply_scopes
-    def custom_layer(self, layer: tf.keras.layers.Layer):
+        model = nn.Sequential(*self.layers)
+        model.name = name
+        return model
+
+    def custom_layer(self, layer: nn.Module):
         """
         Add a custom layer to the model.
         @param layer: TensorFlow layer to add.
         """
-        self.current = layer(self.current)
+        self.layers.append(layer)
 
-    @_apply_scopes
-    def reshape(self, new_shape: tuple, **kwargs):
+    def reshape(self, new_shape: tuple):
         """
         Add a reshape layer. Additional keyword arguments accepted.
         @param new_shape: tuple new shape.
         """
-        self.current = tf.keras.layers.Reshape(new_shape, **kwargs)(self.current)
+        self.layers.append(nn.Unflatten(-1, new_shape))
 
-    def transpose(self, a=0, b=1, **kwargs):
+    def transpose(self, a=0, b=1):
         """
         Transposes the input with a Reshape layer over the two given axes (flips them).
         First dimension for batch size is not included.
         @param a: First axis to transpose, defaults to 0.
         @param b: Second axis to transpose, defaults to 1.
         """
-        shape = list(self.shape())
-        tmp = shape[b]
-        shape[b] = shape[a]
-        shape[a] = tmp
-        self.reshape(tuple(shape), **kwargs)
+        self.layers.append(Transpose(a, b))
 
-    @_apply_scopes
-    def flatten(self, **kwargs):
+    def flatten(self):
         """
         Add a flatten layer. Additional keyword arguments accepted.
         """
-        self.current = tf.keras.layers.Flatten(**kwargs)(self.current)
+        self.layers.append(nn.Flatten())
 
-    @_apply_scopes
-    def dropout(self, rate, **kwargs):
+    def dropout(self, rate):
         """
         Add a dropout layer. Additional keyword arguments accepted.
         @param rate: rate to drop out inputs.
         """
-        self.current = tf.keras.layers.Dropout(rate=rate, **kwargs)(self.current)
+        self.layers.append(nn.Dropout(p=rate))
 
-    @_apply_scopes
-    def dense(self, size: int, depth=1, activation='relu', **kwargs):
+    def batch_norm(self, output_size: int):
         """
-        Procedurally add dense layers to the model.
+        Add a batch normalization to the model.
+        """
+        self.layers.append(nn.BatchNorm1d(output_size))
+
+    def dense(self, output_size: int, depth=1, activation='relu'):
+        """
+        Procedurally add dense layers to the model. Input size is inferred.
         @param size: number of nodes per layer.
         @param depth: number of layers to add.
-        @param activation: activation function to use (relu by default).
+        @param activation: activation function to use (relu by default, can pass in callable/None).
         Additional keyword arguments are passed to TensorFlow Dense layer constructor.
         """
         for _ in range(depth):
-            self.current = tf.keras.layers.Dense(size, activation=activation,
-                                                 **kwargs)(self.current)
-            self.current = tf.keras.layers.BatchNormalization()(self.current)
+            self.layers.append(nn.Linear(self.shape()[-1], output_size))
+            self.batch_norm(output_size)
+            if activation is not None:
+                self.layers.append(nn.ReLU() if activation == 'relu' else activation)
 
-    @_apply_scopes
-    def conv1D(self, filters: int, kernel_size: int, output_size: int, **kwargs):
+    def conv1D(self, filters: int, kernel_size: int, output_size: int):
         """
         Add a convolutional layer.
         Output passes through feed forward layer with size specified by output_dim.
@@ -287,20 +333,19 @@ class ModelBuilder:
         @param activation: activation function.
         Additional keyword arguments are passed to TensorFlow Conv1D layer constructor.
         """
-        if len(self.shape()) != 2:
+        shape = self.shape()
+        if len(shape) != 2:
             raise IncompatibleDimensionsException()
-        if kernel_size >= self.shape()[0]:
+        if kernel_size >= shape[0]:
             raise IncompatibleDimensionsException()
 
-        self.current = tf.keras.layers.Conv1D(filters, kernel_size, activation='relu',
-                                              **kwargs)(self.current)
-        self.current = tf.keras.layers.MaxPooling1D()(self.current)
-        # Removes extra dimension from shape
-        self.current = tf.keras.layers.Flatten()(self.current)
-        self.current = tf.keras.layers.BatchNormalization()(self.current)
+        self.layers.append(nn.Conv1D(shape[1], filters, kernel_size))
+        self.layers.append(nn.ReLU())
+        self.layers.append(nn.MaxPool1d(2))
+        self.layers.append(nn.Flatten())
+        self.batch_norm(filters * ((self.shape()[0] - kernel_size + 1) // 2))
         self.dense(output_size, activation='relu')
 
-    @_apply_scopes
     def attention(self, num_heads: int, output_size: int):
         """
         Add an attention layer. Embeddings must be generated beforehand.
@@ -308,9 +353,38 @@ class ModelBuilder:
         @param output_size: Output size.
         @param rate: Dropout rate for AttentionBlock.
         """
-        if len(self.shape()) != 2:
+        shape = self.shape()
+        if len(shape) != 2:
             raise IncompatibleDimensionsException()
+        self.layers.append(AttentionBlock(shape[1], num_heads, output_size))
 
-        self.current = AttentionBlock(self.shape()[1], num_heads, output_size)(self.current)
-        self.current = tf.keras.layers.BatchNormalization()(self.current)
+    def save_model(self, path: str):
+        """
+        Save the current model to a file.
 
+        @param path: The file path where the model should be saved.
+        """
+        if not self.layers:
+            raise ValueError("No model to save. Build the model first.")
+
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        # Save the model
+        torch.save({
+            'model': nn.Sequential(*self.layers),
+            'input_shape': self.input_shape,
+            'input_dtype': self.input_dtype,
+        }, path)
+
+    @staticmethod
+    def load_model(path: str):
+        """
+        Load a model from a file.
+
+        @param path: The file path from which to load the model.
+        @return: A new ModelBuilder instance with the loaded model.
+        """
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"No file found at {path}")
+        return torch.load(path)

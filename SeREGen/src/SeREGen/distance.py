@@ -16,12 +16,13 @@ class Distance:
     Abstract class representing a distance metric for two sequences.
     Downstream subclasses must implement transform.
     """
+
     def __init__(self, jobs=1, chunksize=1, quiet=False):
         self.jobs = jobs
         self.chunksize = chunksize
         self.quiet = quiet
 
-    #pylint: disable=unused-argument
+    # pylint: disable=unused-argument
     def transform(self, pair: tuple) -> int:
         """
         Transform a pair of elements into a single integer distance between those elements. This can
@@ -70,6 +71,7 @@ class VectorizedDistance(Distance):
     Distance with a vectorized implementation. Takes advantage of multiprocessing and
     vectorization. transform() must take in pairs of single elements OR pairs of arrays of elements.
     """
+
     def transform_multi(self, y1, y2, silence=False):
         if self.jobs == 1 or len(y1) < self.chunksize:
             return self.postprocessor(self.transform((y1, y2)))
@@ -87,6 +89,7 @@ class Euclidean(VectorizedDistance):
     """
     Basic Euclidean distance implementation
     """
+
     def transform(self, pair: tuple) -> int:
         return np.linalg.norm(pair[0] - pair[1], axis=-1)
 
@@ -95,6 +98,7 @@ class Cosine(VectorizedDistance):
     """
     Cosine distance implementation.
     """
+
     def transform(self, pair: tuple) -> int:
         # Subtracting from 1 to convert similarity to distance
         return np.sum(pair[0] * pair[1], axis=-1) / (np.linalg.norm(pair[0], axis=-1) *
@@ -107,17 +111,18 @@ class Cosine(VectorizedDistance):
         return 1 - super().invert_postprocessing(data)
 
 
-class Hyperbolic(VectorizedDistance):  # TODO: KNOWN TO GIVE DIFFERENT RESULTS TO TF IMPL
+class Hyperbolic(VectorizedDistance):
     """
     Computes hyperbolic distance between two arrays of points in Poincaré ball model.
     Numpy implementation.
     """
+
     def transform(self, pair):
         a, b = pair
         a = a.astype(np.float64)  # Both arrays must be the same type
         b = b.astype(np.float64)
         eps = np.finfo(np.float64).eps  # Machine epsilon
-        sq_norm = lambda v: np.clip(np.sum(v ** 2, axis=-1), eps, 1 - eps)
+        def sq_norm(v): return np.clip(np.sum(v ** 2, axis=-1), eps, 1 - eps)
 
         numerator = np.sum((a - b) ** 2, axis=-1)
         denominator_a = 1 - sq_norm(a)
@@ -133,6 +138,7 @@ class IncrementalDistance(VectorizedDistance):
     Meant for use with VectorizedDistances. distance must have a transform() that can handle pairs
     of arrays of elements, and these arrays can have length 1.
     """
+
     def __init__(self, distance: VectorizedDistance, counter: KMerCounter):
         super().__init__()
         self.distance = distance
@@ -150,6 +156,7 @@ class EditDistance(Distance):
     """
     Normalized Levenshtein edit distance between textual DNA sequences.
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.aligner = Levenshtein.distance
@@ -164,6 +171,7 @@ class SmithWaterman(Distance):
     Smith-Waterman local alignment similarity scores. Deprecated, not recommended unless this
     legacy functionality is necessary.
     """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.aligner = PairwiseAligner()
@@ -182,6 +190,7 @@ class CompoundDistance(Distance):
     """
     Distance between two chemical compounds.
     """
+
     def transform(self, pair: tuple):
         fp1 = AllChem.GetMorganFingerprintAsBitVect(pair[0], 2, nBits=1024)
         fp2 = AllChem.GetMorganFingerprintAsBitVect(pair[1], 2, nBits=1024)

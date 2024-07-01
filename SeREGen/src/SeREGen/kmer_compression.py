@@ -6,20 +6,28 @@ import shutil
 import pickle
 import copy
 import multiprocessing as mp
+
+
 import numpy as np
 from tqdm import tqdm
-import tensorflow as tf
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA as SKPCA, IncrementalPCA
+import torch
+from torch import nn
+
+
 from .kmers import KMerCounter
+from .encoders import ModelBuilder
+from .comparative_encoder import ComparativeModel
 
 
 class KMerCountCompressor(KMerCounter):
-    #pylint: disable=unused-argument
+    # pylint: disable=unused-argument
     """
     Abstract Compressor class used for compressing input data.
     """
     _SAVE_EXCLUDE_VARS = []
+
     def __init__(self, counter: KMerCounter, compress_to: int):
         super().__init__(counter.k, jobs=counter.jobs, chunksize=counter.chunksize,
                          debug=counter.debug, quiet=counter.quiet)
@@ -103,6 +111,7 @@ class _PCACompressor(KMerCountCompressor):
     """
     Abstract PCA compressor, conserves code.
     """
+
     def __init__(self, pca, *args, jobs=1, chunksize=1, **kwargs):
         super().__init__(*args, **kwargs)
         self.pca = pca
@@ -126,9 +135,9 @@ class _PCACompressor(KMerCountCompressor):
         if len(last_batch) > 0:
             result.append(fn(last_batch))
         return np.concatenate(result) if len(result) > 0 and isinstance(result[0], np.ndarray) \
-                else result
+            else result
 
-    def raw_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
+    def raw_transform(self, data: np.ndarray) -> np.ndarray:
         return self.pca.transform(self.scaler.transform(data))
 
     def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
@@ -150,6 +159,7 @@ class KMerCountPCA(_PCACompressor):
     """
     Use PCA to compress input data. Suppoorts parallelization on transform, not fit.
     """
+
     def __init__(self, counter: KMerCounter, n_components: int, **kwargs):
         pca = SKPCA(n_components=n_components)
         super().__init__(pca, counter, n_components, **kwargs)
@@ -163,6 +173,7 @@ class KMerCountIPCA(_PCACompressor):
     """
     Use PCA to compress the input data. Supports fit parallelization over multiple CPUs.
     """
+
     def __init__(self, counter: KMerCounter, n_components: int, **kwargs):
         """
         Uses jobs, chunksize defined by KMerCounter
@@ -184,14 +195,15 @@ class KMerCountIPCA(_PCACompressor):
         self.pca.fit(last_batch)
 
 
-class KMerCountAE(KMerCountCompressor):
+class KMerCountAE(KMerCountCompressor, ComparativeModel):
+    # pylint: disable=too-many-instance-attributes
     """
     Train an autoencoder to compress the input data.
     """
     _SAVE_EXCLUDE_VARS = ['encoder', 'decoder', 'ae']
-    def __init__(self, counter: KMerCounter, inputs: tf.keras.layers.Layer, reprs: tf.keras.layers.Layer,
-                 outputs: tf.keras.layers.Layer, repr_size: int, batch_size: int, loss='mse',
-                 epoch_limit=100, patience=2, val_split=.1, **kwargs):
+
+    def __init__(self, counter: KMerCounter, inputs: nn.Module, outputs: nn.Module, repr_size: int,
+                 batch_size: int, loss='mse', epoch_limit=100, patience=2, val_split=.1, **kwargs):
         """
         Create an encoder/decoder autoencoder pair.
         Encoder: inputs=inputs, outputs=reprs
@@ -200,46 +212,44 @@ class KMerCountAE(KMerCountCompressor):
         epoch_limit, patience: modify fit() behavior, can be overridden in fit()
         """
         super().__init__(counter, repr_size, **kwargs)
-        self.batch_size = batch_size
-        self.encoder = tf.keras.Model(inputs=inputs, outputs=reprs)
-        self.decoder = tf.keras.Model(inputs=reprs, outputs=outputs)
-        self.ae = tf.keras.Model(inputs=inputs, outputs=outputs)
-        self.ae.compile(optimizer='adam', loss=loss)
         self.epoch_limit = epoch_limit
         self.patience = patience
         self.val_split = val_split
+        self.batch_size = batch_size
+        self.encoder = inputs
+        self.decoder = outputs
+        self.ae = nn.Sequential(self.encoder, self.decoder)
+        self.loss = nn.MSELoss() if loss == 'mse' else loss
+        self.optimizer = torch.optim.Adam(self.ae.parameters())
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, patience=patience // 2)
 
     @classmethod
-    def auto(cls, counter: KMerCounter, data: np.ndarray, repr_size: int, output_activation=None,
-            **kwargs):
+    def auto(cls, counter: KMerCounter, data: np.ndarray, repr_size: int, batch_size=256, **kwargs):
         """
         Automatically generate an autoencoder based on the input data. Recommended way to create
         an AECompressor.
         """
-        inputs = tf.keras.layers.Input(data.shape[1:])
-        x = tf.keras.layers.Dense(data.shape[-1], activation='relu')(inputs)
-        reprs = tf.keras.layers.Dense(repr_size)(x)
-        x = tf.keras.layers.Dense(data.shape[-1], activation='relu')(reprs)
-        outputs = tf.keras.layers.Dense(data.shape[-1], activation=output_activation)(x)
-        return cls(counter, inputs, reprs, outputs, repr_size, **kwargs)
+        inputs_builder = ModelBuilder(data.shape[1:])
+        inputs_builder.dense(data.shape[1:])
+        inputs = inputs_builder.compile(repr_size=repr_size)
+        outputs_builder = ModelBuilder((repr_size,))
+        outputs_builder.dense(data.shape[1:])
+        outputs = outputs_builder.compile(repr_size=data.shape[1:])
+        return cls(counter, inputs, outputs, repr_size, batch_size=batch_size, **kwargs)
 
     def save(self, savedir: str):
         super().save(savedir)
-        self.encoder.save(os.path.join(savedir, 'encoder.h5'))
-        self.decoder.save(os.path.join(savedir, 'decoder.h5'))
-        self.ae.save(os.path.join(savedir, 'ae.h5'))
+        torch.save(self.encoder, os.path.join(savedir, 'encoder.pth'))
+        torch.save(self.decoder, os.path.join(savedir, 'decoder.pth'))
+        torch.save(self.ae, os.path.join(savedir, 'ae.pth'))
 
     def _load_special(self, savedir: str):
-        self.encoder = tf.keras.models.load_model(os.path.join(savedir, 'encoder.h5'))
-        self.decoder = tf.keras.models.load_model(os.path.join(savedir, 'decoder.h5'))
-        self.ae = tf.keras.models.load_model(os.path.join(savedir, 'ae.h5'))
+        self.encoder = torch.load(os.path.join(savedir, 'encoder.pth'))
+        self.decoder = torch.load(os.path.join(savedir, 'decoder.pth'))
+        self.ae = torch.load(os.path.join(savedir, 'ae.pth'))
 
-    def summary(self):
-        """
-        Print a summary of this autoencoder.
-        """
-        self.ae.summary()
-
+    # TODO: merge model training code to avoid duplication
     def fit(self, data: np.ndarray, epoch_limit=None, patience=None, val_split=None):
         """
         Train the autoencoder model on the given data. Uses early stopping to end training.
@@ -248,21 +258,63 @@ class KMerCountAE(KMerCountCompressor):
         epoch_limit = epoch_limit or self.epoch_limit
         patience = patience or self.patience
         val_split = val_split or self.val_split
+
+        data = torch.FloatTensor(data)
+        train_size = int((1 - val_split) * len(data))
+        train_dataset = torch.utils.data.TensorDataset(data[:train_size])
+        val_dataset = torch.utils.data.TensorDataset(data[train_size:])
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=self.batch_size, shuffle=True)
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=self.batch_size)
+
         if not self.quiet:
             print('Training AE Compressor...')
-        else:
-            tf.keras.utils.disable_interactive_logging()
-        self.ae.fit(data, data, epochs=epoch_limit, batch_size=self.batch_size, callbacks=[
-            tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience),
-        ], validation_split=val_split)
-        if self.quiet:
-            tf.keras.utils.enable_interactive_logging()
+
+        best_val_loss = float('inf')
+        patience_counter = 0
+
+        for epoch in range(epoch_limit):
+            self.ae.train()
+            for batch in train_loader:
+                self.optimizer.zero_grad()
+                inputs = batch[0]
+                outputs = self.ae(inputs)
+                loss = self.loss(outputs, inputs)
+                loss.backward()
+                self.optimizer.step()
+
+            self.ae.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for batch in val_loader:
+                    inputs = batch[0]
+                    outputs = self.ae(inputs)
+                    val_loss += self.loss(outputs, inputs).item()
+            val_loss /= len(val_loader)
+
+            self.scheduler.step(val_loss)
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    break
+
+            if not self.quiet:
+                print(f'Epoch {epoch + 1}/{epoch_limit}, Validation Loss: {val_loss:.4f}')
+
+    def summary(self):
+        """
+        Print a summary of this autoencoder.
+        """
+        print(self.ae)
 
     def transform(self, data: np.ndarray, silence=False) -> np.ndarray:
-        return self.encoder(data) if self.quiet or silence else \
-            self.encoder.predict(data, batch_size=self.batch_size)
+        with torch.no_grad():
+            return self.encoder(torch.FloatTensor(data)).numpy()
 
     def inverse_transform(self, data: np.ndarray, silence=False) -> np.ndarray:
-        return self.decoder(data) if self.quiet or silence else \
-            self.decoder.predict(data, batch_size=self.batch_size)
-
+        with torch.no_grad():
+            return self.decoder(torch.FloatTensor(data)).numpy()

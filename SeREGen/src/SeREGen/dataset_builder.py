@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from Bio import SeqIO
-import tensorflow as tf
+from torch.nn.utils.rnn import pad_sequence
 from tqdm import tqdm
 
 from .kmers import KMerCounter, Nucleotide_AA
@@ -20,6 +20,7 @@ class _SequenceTrimmer:
     Helper class for Python multiprocessing library, allows for sequence trimming and padding
     to be multiprocessed with arbitrary trim lengths.
     """
+
     def __init__(self, length: int):
         self.length = length
 
@@ -73,6 +74,7 @@ class DatasetBuilder:
     """
     Constructs a Dataset from input files.
     """
+
     def __init__(self, header_parser=None):
         """
         @param header_parser: HeaderParser object for header parsing
@@ -187,11 +189,11 @@ class Dataset(pd.DataFrame):
         """
         self['seqs'] = self['seqs'].apply(lambda i: re.sub('[^ATGCUN]', 'N', i))
 
-    def gen_kmer_seqs(self, K=-1, jobs=1, chunksize=1, output_len=None, progress=True,
+    def gen_kmer_seqs(self, K=-1, jobs=1, chunksize=1, max_len=None, progress=True,
                       avoid_pad=True, avoid_oov=False, counter=None) -> list[np.ndarray]:
         """
         Convert all sequences to ordinal encoded kmer sequences.
-        @param output_len: If given, trims and pads sequences to this length.
+        @param max_len: If given, trims and pads sequences to this length.
         @param avoid_pad: Adds 1 to all kmer values to dodge pad token. True by default.
         @param avoid_oov: Additionally adds 1 to all kmer values to dodge oov token. False by
         default.
@@ -200,11 +202,16 @@ class Dataset(pd.DataFrame):
             raise ValueError('Either K must be specified or a KMerCounter object must be passed!')
         counter = counter or KMerCounter(K, jobs=jobs, chunksize=chunksize, quiet=not progress)
         kmers = counter.kmer_sequences(self['seqs'].to_numpy())
-        if avoid_pad or avoid_oov:  # Ensures no kmer values conflict with special tokens.
-            kmers = [i + int(avoid_pad) + int(avoid_oov) for i in kmers]
-        if not output_len:
+        # Ensures no kmer values conflict with special tokens.
+        kmers = [i + int(avoid_pad) + int(avoid_oov) for i in kmers]
+        if not max_len:
             return kmers
-        return tf.keras.utils.pad_sequences(kmers, maxlen=output_len, value=0)
+
+        padded_kmers = pad_sequence(kmers, batch_first=True, padding_value=0)
+        # Trim to max_len
+        if padded_kmers.shape[1] > max_len:
+            padded_kmers = padded_kmers[:, :max_len]
+        return padded_kmers.numpy()
 
     def aa_seqs(self, jobs=1, chunksize=1, progress=True, converter=None) -> list[str]:
         """
@@ -233,6 +240,7 @@ class HeaderParser:
     """
     HeaderParser class that can be extended to parse headers from FASTA files into labels.
     """
+
     def __init__(self, label_extractor: callable, label_cols: list[str]):
         """
         It's easily possible to create a new custom HeaderParser with a custom label_extractor
@@ -273,9 +281,10 @@ class HeaderParser:
         return cls([self.label_extractor(i) for i in data])
 
 
-
 def _silva_tax_extractor(header: str):
     return np.array(' '.join(header.split(' ')[1:]).split(';'))
+
+
 SILVA_header_parser = HeaderParser(_silva_tax_extractor,
                                    ['Domain', 'Phylum', 'Class', 'Order', 'Family', 'Genus',
                                     'Species'])
@@ -283,5 +292,6 @@ SILVA_header_parser = HeaderParser(_silva_tax_extractor,
 
 def _covid_variant_extractor(header: str):
     return np.array([header.split('|')[2]], dtype=str)
-COVID_header_parser = HeaderParser(_covid_variant_extractor, ['Variant'])
 
+
+COVID_header_parser = HeaderParser(_covid_variant_extractor, ['Variant'])
