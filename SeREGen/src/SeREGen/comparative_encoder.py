@@ -15,44 +15,12 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 import torch
 from torch import nn
+from torchinfo import summary
 from tqdm import tqdm
 from geomstats.geometry.poincare_ball import PoincareBall
 
 from .encoders import ModelBuilder
 from .distance import Hyperbolic, Euclidean, Cosine
-
-
-def _prepare_torch_dataset(x, y=None, batch_size=256):
-    """
-    Prepare a PyTorch dataset and dataloader from input tensors.
-
-    @param x: Input tensor(s) or numpy array(s). Can be a single input or a list/tuple of inputs.
-    @param y: Target tensor or numpy array. Optional for cases where there's no target.
-    @param batch_size: Batch size for the dataloader
-    @return: PyTorch DataLoader
-    """
-    def to_torch_tensor(data):
-        if isinstance(data, np.ndarray):
-            return torch.from_numpy(data).float()
-        if isinstance(data, torch.Tensor):
-            return data.float()
-        raise TypeError(f"Unsupported data type: {type(data)}")
-
-    # Handle single or multiple x inputs
-    if isinstance(x, (list, tuple)):
-        x = [to_torch_tensor(xi) for xi in x]
-    else:
-        x = [to_torch_tensor(x)]
-
-    # Handle y if provided
-    if y is not None:
-        y = to_torch_tensor(y)
-        dataset = torch.utils.data.TensorDataset(*x, y)
-    else:
-        dataset = torch.utils.data.TensorDataset(*x)
-
-    # Create dataloader
-    return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 
 class _NormalizedDistanceLayer(nn.Module):
@@ -134,53 +102,98 @@ class ComparativeLayer(nn.Module):
         return {'dist': distances}
 
 
-class ComparativeModel:
+class ModelTrainer:
     """
-    Abstract ComparativeModel class. Stores some useful common functions.
+    Contains all the necessary code to train a torch model with a nice fit() loop. train_step()
+    must be implemented by subclass.
     """
 
-    def __init__(self, dist=None, embed_dist='euclidean', model=None, history=None,
-                 silence=False, properties=None, random_seed=None, **kwargs):
-        self.distance = dist
-        self.silence = silence
-        self.properties = {} if properties is None else properties
+    def __init__(self, model: nn.Module, losses=None, optimizer=None, history=None, silence=False,
+                 properties=None, random_seed=None):
+        self.model = model
         self.history = history or {}
-        self.embed_dist = embed_dist
+        self.silence = silence
+        self.properties = properties or {}
         self.rng = np.random.default_rng(seed=random_seed)
-        self.model = model or self.create_model(**kwargs)
+        self.losses = losses
+        self.optimizer = optimizer
 
-    def _print(self, *args, **kwargs):
+    @staticmethod
+    def prepare_torch_dataset(x, y=None, batch_size=256):
+        """
+        Prepare a PyTorch dataset and dataloader from input tensors.
+
+        @param x: Input tensor(s) or numpy array(s). Can be a single input or a list/tuple of inputs.
+        @param y: Target tensor or numpy array. Optional for cases where there's no target.
+        @param batch_size: Batch size for the dataloader
+        @return: PyTorch DataLoader
+        """
+        def to_torch_tensor(data):
+            if isinstance(data, np.ndarray):
+                return torch.from_numpy(data).float()
+            if isinstance(data, torch.Tensor):
+                return data.float()
+            raise TypeError(f"Unsupported data type: {type(data)}")
+
+        # Handle single or multiple x inputs
+        if isinstance(x, (list, tuple)):
+            x = [to_torch_tensor(xi) for xi in x]
+        else:
+            x = [to_torch_tensor(x)]
+
+        # Handle y if provided
+        if y is not None:
+            y = to_torch_tensor(y)
+            dataset = torch.utils.data.TensorDataset(*x, y)
+        else:
+            dataset = torch.utils.data.TensorDataset(*x)
+
+        # Create dataloader
+        return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    def train_step(self, x, y, batch_size) -> dict:
+        """
+        Abstract single epoch of training.
+        """
+        dataloader = _prepare_torch_dataset(x, y, batch_size)
+        epoch_loss = 0.0
+        self.model.train()
+        progress_bar = dataloader if self.silence else tqdm(
+            dataloader, total=len(dataloader), desc="Training model...")
+
+        for batch in progress_bar:
+            batch_x1, batch_x2, batch_y = batch
+            self.optimizer.zero_grad()
+
+            # Forward pass
+            outputs = self.model(batch_x1, batch_x2)
+
+            # Compute loss
+            loss = self.losses['dist'](outputs['dist'], batch_y)
+            if self.properties['reg_dims']:
+                loss += self.losses['encoder'](outputs['encoder'])
+
+            loss.backward()
+            self.optimizer.step()
+            epoch_loss += loss.item()
+            running_loss = epoch_loss / (progress_bar.n + 1)
+            if not self.silence:
+                progress_bar.set_description(f"Training model (loss: {running_loss:.4f})")
+
         if not self.silence:
-            print(*args, **kwargs)
-
-    def create_model(self):
-        """
-        Create a model. Scopes automatically applied.
-        """
-        return None
-
-    # Subclass must override
-    def train_step(self) -> dict:
-        """
-        Single epoch of training.
-        """
-        return {}
-
-    def random_set(self, x: np.ndarray, y: np.ndarray, epoch_factor=1) -> tuple[np.ndarray]:
-        p1 = np.concatenate([self.rng.permutation(x.shape[0])
-                            for _ in range(epoch_factor)])
-        p2 = np.concatenate([self.rng.permutation(x.shape[0])
-                            for _ in range(epoch_factor)])
-        return x[p1], x[p2], y[p1], y[p2]
+            progress_bar.close()
+        return {'loss': epoch_loss / len(dataloader)}
 
     def first_epoch(self, *args, lr=.1, **kwargs):
         """
         In the first epoch, modify only the scaling parameter with a higher LR.
         """
-        orig_lr = self.model.optimizer.learning_rate
-        self.model.optimizer.learning_rate.assign(lr)
+        orig_lr = self.model.optimizer.param_groups[0]['lr']
+        for param_group in self.model.optimizer.param_groups:
+            param_group['lr'] = lr
         self.train_step(*args, **kwargs)
-        self.model.optimizer.learning_rate.assign(orig_lr)
+        for param_group in self.model.optimizer.param_groups:
+            param_group['lr'] = orig_lr
 
     def fit(self, *args, epochs=100, early_stop=True,
             min_delta=0, patience=3, first_ep_lr=0, **kwargs):
@@ -237,11 +250,62 @@ class ComparativeModel:
         self._print(f"Completed fit() in {time.time() - train_start:.2f}s")
         return self.history
 
-    def transform(self, data: np.ndarray):
+    def transform(self, data: np.ndarray, batch_size: int) -> np.ndarray:
         """
-        Transform the given data.
+        Transform the given data into representations using trained model.
+        @param data: np.ndarray containing all values to transform.
+        @param batch_size: Batch size for DataLoader.
+        @return np.ndarray: Model output for all inputs.
         """
-        return data
+        dataset = _prepare_torch_dataset(data, None, batch_size)
+        results = []
+        for batch in tqdm(dataset):
+            results.append(self.model(batch))
+        return np.concatenate(results, axis=0)
+
+    def summary(self):
+        return summary(self.model)
+
+
+class ComparativeModel(ModelTrainer):
+    """
+    Abstract ComparativeModel class. Stores some useful common functions.
+    """
+
+    def __init__(self, dist=None, embed_dist='euclidean', model=None, history=None,
+                 silence=False, properties=None, random_seed=None, **kwargs):
+        """
+        model: tuple of (model, losses, optimizer)
+        """
+        model, losses, optimizer = model or self.create_model(**kwargs)
+        super().__init__(
+            model,
+            losses,
+            optimizer,
+            history,
+            silence,
+            properties,
+            random_seed,
+        )
+        self.distance = dist
+        self.embed_dist = embed_dist
+
+    def _print(self, *args, **kwargs):
+        if not self.silence:
+            print(*args, **kwargs)
+
+    def create_model(self):
+        """
+        Create a model. Scopes automatically applied.
+        """
+        return None, None, None
+
+    def random_set(self, x: np.ndarray, y: np.ndarray, epoch_factor=1) -> tuple[np.ndarray]:
+        p1 = np.concatenate([self.rng.permutation(x.shape[0])
+                            for _ in range(epoch_factor)])
+        p2 = np.concatenate([self.rng.permutation(x.shape[0])
+                            for _ in range(epoch_factor)])
+        return x[p1], x[p2], y[p1], y[p2]
 
     def save(self, path: str, model=None):
         """
@@ -325,8 +389,6 @@ class ComparativeEncoder(ComparativeModel):
             'reg_dims': reg_dims
         }
         self.encoder = model
-        self.losses = None
-        self.optimizer = None
         super().__init__(properties=properties or default_properties, **kwargs)
 
     def create_model(self, loss='corr_coef', lr=.001, **adam_kwargs):
@@ -337,17 +399,17 @@ class ComparativeEncoder(ComparativeModel):
             self.properties['repr_size'])
 
         if loss == 'corr_coef':
-            self.losses = {'dist': self.correlation_coefficient_loss}
+            losses = {'dist': self.correlation_coefficient_loss}
         elif loss == 'r2':
-            self.losses = {'dist': self.r2_loss}
+            losses = {'dist': self.r2_loss}
         else:
-            self.losses = {'dist': loss}
+            losses = {'dist': loss}
 
         if self.properties['reg_dims']:
-            self.losses['encoder'] = self.reg_loss
+            losses['encoder'] = self.reg_loss
 
-        self.optimizer = torch.optim.Adam(comparative_model.parameters(), lr=lr, **adam_kwargs)
-        return comparative_model
+        optimizer = torch.optim.Adam(comparative_model.parameters(), lr=lr, **adam_kwargs)
+        return comparative_model, losses, optimizer
 
     @classmethod
     def from_model_builder(cls, builder: ModelBuilder, repr_size=None, norm_type='soft_clip',
@@ -412,40 +474,10 @@ class ComparativeEncoder(ComparativeModel):
         # It's common to input pandas series from Dataset instead of numpy array
         data = data.to_numpy() if isinstance(data, pd.Series) else data
         distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
-
         x1, x2, y1, y2 = self.random_set(data, distance_on, epoch_factor=epoch_factor)
-
         y = self.distance.transform_multi(y1, y2)
+        return super().train_step((x1, x2), y, batch_size)
 
-        dataloader = _prepare_torch_dataset((x1, x2), y, batch_size)
-
-        epoch_loss = 0.0
-        self.model.train()
-        progress_bar = dataloader if self.silence else tqdm(
-            dataloader, total=len(dataloader), desc="Training model...")
-
-        for batch in progress_bar:
-            batch_x1, batch_x2, batch_y = batch
-            self.optimizer.zero_grad()
-
-            # Forward pass
-            outputs = self.model(batch_x1, batch_x2)
-
-            # Compute loss
-            loss = self.losses['dist'](outputs['dist'], batch_y)
-            if self.properties['reg_dims']:
-                loss += self.losses['encoder'](outputs['encoder'])
-
-            loss.backward()
-            self.optimizer.step()
-            epoch_loss += loss.item()
-            running_loss = epoch_loss / (progress_bar.n + 1)
-            if not self.silence:
-                progress_bar.set_description(f"Training model (loss: {running_loss:.4f})")
-
-        if not self.silence:
-            progress_bar.close()
-        return {'loss': epoch_loss / len(dataloader)}
 
     def fit(self, *args, distance_on=None, **kwargs):
         distance_on = distance_on if distance_on is not None else args[1]
@@ -478,7 +510,7 @@ class ComparativeEncoder(ComparativeModel):
         """
         Prints a summary of the encoder.
         """
-        self.encoder.summary()
+        summary(self.encoder)
 
 
 class Decoder(ComparativeModel):
@@ -560,8 +592,6 @@ class LinearDecoder(Decoder):
     """
     Linear model of a decoder. Useful with correlation coefficient loss.
     """
-    # pylint: disable=arguments-differ
-
     def create_model(self):
         return _LinearRegressionModel()
 
@@ -598,17 +628,17 @@ class DenseDecoder(Decoder):
         super().__init__(*args, **kwargs)
         self.batch_size = batch_size
 
-    # pylint: disable=arguments-differ
     def create_model(self):
-        dec_input = tf.keras.layers.Input((1,))
-        x = tf.keras.layers.Dense(10, activation='relu')(dec_input)
-        x = tf.keras.layers.Dense(10, activation='relu')(x)
-        x = tf.keras.layers.Dropout(rate=.1)(x)
-        x = tf.keras.layers.Dense(10, activation='relu')(x)
-        x = tf.keras.layers.Dense(1, activation='relu')(x)
-        decoder = tf.keras.Model(inputs=dec_input, outputs=x)
-        decoder.compile(optimizer='adam', loss='mse')
-        return decoder
+        optimizer = torch.optim.Adam(comparative_model.parameters(), lr=lr, **adam_kwargs)
+        losses = {'loss': nn.MSELoss()}
+        return nn.Sequential(
+            nn.Linear(1, 10),
+            nn.ReLU(),
+            nn.Linear(10, 10),
+            nn.Dropout(.1),
+            nn.Linear(10, 10),
+            nn.ReLU()
+        ), optimizer, losses
 
     def fit(self, *args, epochs=25, **kwargs):
         """
@@ -619,25 +649,15 @@ class DenseDecoder(Decoder):
 
     def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
         # It's common to input pandas series from Dataset instead of numpy array
-        distance_on = distance_on.to_numpy() if isinstance(
-            distance_on, pd.Series) else distance_on
-        x, y = self.random_distance_set(
-            encodings, distance_on, epoch_factor=epoch_factor)
-        train_data = _prepare_tf_dataset(x, y, self.batch_size)
-        return self.model.fit(train_data, epochs=1).history
+        distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
+        x, y = self.random_distance_set(encodings, distance_on, epoch_factor=epoch_factor)
+        return super().train_step(x, y, self.batch_size)
 
     def transform(self, data: np.ndarray) -> np.ndarray:
         """
         Transform the given distances between this model's encodings into predicted true distances.
         """
-        dataset = _prepare_tf_dataset(data, None, self.batch_size)
-        return self.distance.invert_postprocessing(self.model.predict(dataset))
-
-    def summary(self):
-        """
-        Prints a summary of the decoder.
-        """
-        self.model.summary()
+        return self.distance.invert_postprocessing(super().transform(data))
 
     @classmethod
     def load(cls, path: str, v_scope='decoder', **kwargs):

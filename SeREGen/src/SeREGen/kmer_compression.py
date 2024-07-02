@@ -18,7 +18,7 @@ from torch import nn
 
 from .kmers import KMerCounter
 from .encoders import ModelBuilder
-from .comparative_encoder import ComparativeModel
+from .comparative_encoder import ModelTrainer
 
 
 class KMerCountCompressor(KMerCounter):
@@ -195,7 +195,7 @@ class KMerCountIPCA(_PCACompressor):
         self.pca.fit(last_batch)
 
 
-class KMerCountAE(KMerCountCompressor, ComparativeModel):
+class KMerCountAE(KMerCountCompressor, ModelTrainer):
     # pylint: disable=too-many-instance-attributes
     """
     Train an autoencoder to compress the input data.
