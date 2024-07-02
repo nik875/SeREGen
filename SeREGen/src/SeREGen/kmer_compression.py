@@ -26,7 +26,7 @@ class KMerCountCompressor(KMerCounter):
 
     def __init__(self, counter: KMerCounter, compress_to: int):
         super().__init__(counter.k, jobs=counter.jobs, chunksize=counter.chunksize,
-                         debug=counter.debug, quiet=counter.quiet)
+                         debug=counter.debug, silence=counter.silence)
         self.compress_to = compress_to
         self.fit_called = False
 
@@ -68,7 +68,7 @@ class KMerCountCompressor(KMerCounter):
         """
         Fit the compressor to the given data.
         @param data: data to fit to.
-        @param quiet: whether to print output
+        @param silence: whether to print output
         """
         self.fit_called = True
 
@@ -125,7 +125,7 @@ class _PCACompressor(KMerCountCompressor):
     def _mp_map_over_batches(self, fn: callable, data: np.ndarray, silence=False) -> np.ndarray:
         full_batches, last_batch = self._batch_data(data)
         with mp.Pool(self.compress_jobs) as p:
-            it = p.imap_unordered(fn, full_batches) if self.quiet or silence else tqdm(
+            it = p.imap_unordered(fn, full_batches) if self.silence or silence else tqdm(
                 p.imap_unordered(fn, full_batches), total=len(full_batches))
             result = list(it)
         if len(last_batch) > 0:
@@ -179,7 +179,7 @@ class KMerCountIPCA(_PCACompressor):
 
     def fit(self, data: np.ndarray):
         super().fit(data)
-        if not self.quiet:
+        if not self.silence:
             print(f'Fitting IPCA Compressor using CPUs: {self.compress_jobs}...')
         data = self.scaler.fit_transform(data)
         full_batches, last_batch = self._batch_data(data)

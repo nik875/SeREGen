@@ -4,50 +4,42 @@ Automated pipelines for sequence representation generation.
 import os
 import shutil
 import pickle
-import multiprocessing as mp
 
-from tqdm import tqdm
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 import matplotlib.pyplot as plt
 import scipy.stats as st
-from scipy.spatial.distance import euclidean
 from sklearn.neighbors import BallTree
 
 from .dataset_builder import DatasetBuilder, SILVA_header_parser, COVID_header_parser
 from .visualize import repr_scatterplot
 from .kmers import KMerCounter, Nucleotide_AA
-from .kmer_compression import KMerCountPCA, KMerCountIPCA, KMerCountAE, KMerCountCompressor
+from .kmer_compression import KMerCountPCA, KMerCountIPCA, KMerCountCompressor
 from .encoders import ModelBuilder
-from .comparative_encoder import ComparativeEncoder, Decoder, DenseDecoder, LinearDecoder
-from .distance import IncrementalDistance, EditDistance, Distance, Cosine, Euclidean
+from .comparative_encoder import ComparativeEncoder, Decoder
+from .distance import IncrementalDistance, EditDistance, Cosine, Euclidean
 
 
 class Pipeline:
+    # pylint: disable=too-many-instance-attributes
     """
     An abstract automated pipeline for sequence representation generation.
     """
-    AVAILABLE_DECODERS = {
-        'default': Decoder,
-        'dense': DenseDecoder,
-        'linear': LinearDecoder
-    }
+
     def __init__(self, model=None, decoder=None, dataset=None, preproc_reprs=None, reprs=None,
-                 quiet=False, random_seed=None):
+                 silence=False, random_seed=None):
         self.model, self.decoder = model, decoder
         self.dataset, self.preproc_reprs, self.reprs = dataset, preproc_reprs, reprs
-        self.quiet = quiet
+        self.silence = silence
         self.index = None
         self.rng = np.random.default_rng(seed=random_seed)
         tf.random.set_seed(random_seed)  # Set global random seed
 
-    def set_decoder(self, decoder, *args, **kwargs):
+    def create_decoder(self, *args, **kwargs):
         """
         Manually set the decoder.
         """
-        self.decoder = decoder if isinstance(decoder, Decoder) else \
-            self.AVAILABLE_DECODERS[decoder](*args, **kwargs)
+        self.decoder = Decoder(*args, **kwargs)
 
     def load_dataset(self, paths: list[str], header_parser='None', trim_to=0, max_rows=None):
         """
@@ -65,17 +57,6 @@ class Pipeline:
         self.dataset.replace_unknown_nucls()
         if trim_to:
             self.dataset.trim_seqs(trim_to)
-
-    def sample_data(self, size: int):
-        """
-        Randomly samples the Dataset and all representations down to size. Irreversible.
-        """
-        sample = self.rng.permutation(size)[:size]
-        self.dataset = self.dataset.iloc[sample]
-        if self.preproc_reprs is not None:
-            self.preproc_reprs = self.preproc_reprs[sample]
-        if self.reprs is not None:
-            self.reprs = self.reprs[sample]
 
     # Subclass must override.
     @staticmethod
@@ -101,7 +82,7 @@ class Pipeline:
         """
         if self.dataset is None:
             raise ValueError('Must load dataset before calling fit!')
-        if not self.quiet:
+        if not self.silence:
             print('Preprocessing dataset...')
         _, unique_inds = np.unique(self.dataset['seqs'], return_index=True)
         self.preprocess_dataset(**kwargs)
@@ -114,10 +95,10 @@ class Pipeline:
         if self.dataset is None:
             raise ValueError('Must load dataset before fitting decoder!')
         # Always transform dataset in case encoder has changed.
-        if not self.quiet:
+        if not self.silence:
             print('Transforming dataset...')
         self.transform_dataset(transform_batch_size)
-        if not self.quiet:
+        if not self.silence:
             print("Training Distance Decoder...")
         self.decoder.fit(self.reprs, distance_on, **kwargs)
 
@@ -134,19 +115,6 @@ class Pipeline:
     def _fit_called_check(self):
         if self.preproc_reprs is None:
             raise ValueError('Fit must be called before transform!')
-
-    def plot_training_history(self, savepath=None):
-        """
-        Plot the training history of the trained model. Converts 1 - r loss into r^2.
-        """
-        data = self.model.history['loss']
-        plt.plot(np.arange(len(data)), data)
-        plt.title('ComparativeEncoder Training Loss History')
-        plt.xlabel('Epoch')
-        plt.ylabel('Model Loss')
-        if savepath:
-            plt.savefig(savepath)
-        plt.show()
 
     def transform(self, seqs: list, batch_size: int) -> list:
         """
@@ -173,75 +141,26 @@ class Pipeline:
         self.index = None  # Delete existing search tree because we assume reprs have changed.
         return self.reprs
 
-    def save(self, savedir: str):
-        """
-        Save the Pipeline to the given directory.
-        """
-        shutil.rmtree(savedir, ignore_errors=True)
-        os.makedirs(savedir)
-        models_path = os.path.join(savedir, 'models')
-        if self.model is not None:
-            self.model.save(os.path.join(models_path, 'encoder'))
-        # pylint: disable=unidiomatic-typecheck
-        if self.decoder is not None and not type(self.decoder) == Decoder:
-            self.decoder.save(os.path.join(models_path, 'decoder'))
-        if self.preproc_reprs is not None:
-            np.save(os.path.join(savedir, 'preproc_reprs.npy'), self.preproc_reprs)
-        if self.reprs is not None:
-            np.save(os.path.join(savedir, 'reprs.npy'), self.reprs)
-
-    @classmethod
-    def load(cls, savedir: str, strategy=None, quiet=False, **custom_kwargs):
-        """
-        Load a Pipeline from the savedir. Keyword arguments passed to ComparativeEncoder load.
-        """
-        # pylint: disable=broad-exception-caught
-        if not os.path.exists(savedir):
-            raise ValueError("Directory doesn't exist!")
-        contents = os.listdir(savedir)
-        kwargs = cls._load_special(savedir)
-        kwargs['quiet'] = quiet
-        if 'models' in contents:
-            thisdir = os.path.join(savedir, 'models')
-            if os.path.exists(os.path.join(thisdir, 'encoder')):
-                kwargs['model'] = ComparativeEncoder.load(os.path.join(thisdir, 'encoder'),
-                                                          strategy=strategy, quiet=quiet)
-            else:
-                print('Warning: encoder missing!')
-            if os.path.exists(os.path.join(thisdir, 'decoder')):
-                kwargs['decoder'] = Decoder.load(os.path.join(thisdir, 'decoder'), quiet=quiet)
-            else:
-                kwargs['decoder'] = Decoder()
-        else:
-            print('Warning: models missing!')
-        if 'preproc_reprs.npy' in contents:
-            try:
-                kwargs['preproc_reprs'] = np.load(os.path.join(savedir, 'preproc_reprs.npy'),
-                                                  allow_pickle=True)
-            except Exception as e:
-                print('Warning: exception in loading preproc_reprs: ' + e)
-        if 'reprs.npy' in contents:
-            try:
-                kwargs['reprs'] = np.load(os.path.join(savedir, 'reprs.npy'), allow_pickle=True)
-            except Exception as e:
-                print('Warning: exception in loading preproc_reprs: ' + e)
-        kwargs.update(custom_kwargs)
-        return cls(**kwargs)
-
-    @staticmethod
-    def _load_special(savedir: str) -> dict:
-        # pylint: disable=unused-argument
-        """
-        Returns a dictionary of all loaded special constructor arguments for this Pipeline.
-        """
-        return {}
-
     def _reprs_check(self):
         """
         Wraps logic to check that reprs exist.
         """
         if self.reprs is None:
             raise ValueError('transform_dataset must be called first!')
+
+    def plot_training_history(self, savepath=None):
+        """
+        Plot the training history of the trained model. Converts 1 - r loss into r^2.
+        """
+        self._fit_called_check()
+        data = self.model.history['loss']
+        plt.plot(np.arange(len(data)), data)
+        plt.title('ComparativeEncoder Training Loss History')
+        plt.xlabel('Epoch')
+        plt.ylabel('Model Loss')
+        if savepath:
+            plt.savefig(savepath)
+        plt.show()
 
     def visualize_axes(self, x: int, y: int, **kwargs):
         """
@@ -252,15 +171,6 @@ class Pipeline:
         """
         self._reprs_check()
         repr_scatterplot(np.stack([self.reprs[:, x], self.reprs[:, y]], axis=1), **kwargs)
-
-    def visualize_2D(self, **kwargs):
-        """
-        Visualizes 2D dataset as a scatterplot. Keyword arguments to repr_scatterplot are accepted.
-        """
-        self._reprs_check()
-        if len(self.reprs.shape) != 2 or self.reprs.shape[1] != 2:
-            raise ValueError('Incompatible representation dimensions!')
-        self.visualize_axes(0, 1, **kwargs)
 
     def search(self, query: list[str], n_neighbors=1,
                **kwargs) -> tuple[np.ndarray, list[pd.Series]]:
@@ -274,7 +184,7 @@ class Pipeline:
         self._reprs_check()
         if self.model.embed_dist == 'euclidean':
             if self.index is None:  # If index hasn't been created, create it.
-                if not self.quiet:
+                if not self.silence:
                     print('Creating search index...')
                 self.index = BallTree(self.reprs)
             query_enc = self.transform([query], 1)
@@ -309,18 +219,19 @@ class KMerCountsPipeline(Pipeline):
         'euclidean': Euclidean,
         'edit': EditDistance
     }
+
     def __init__(self, counter=None, compressor=None, **kwargs):
         super().__init__(**kwargs)
         self.counter = counter
         self.K_ = self.counter.k if self.counter else None
-        self.repr_size_ = self.model.properties['repr_size'] if self.model else None
+        self.input_dim =
         self.compressor = compressor
 
     def create_kmer_counter(self, K: int, **kwargs):
         """
         Add a KMerCounter to this KMerCountsPipeline.
         """
-        self.counter = KMerCounter(K, quiet=self.quiet, **kwargs)
+        self.counter = KMerCounter(K, silence=self.silence, **kwargs)
         self.K_ = self.counter.k
 
     def create_compressor(self, compressor: str, repr_size=0, fit_sample_frac=1, **init_args):
@@ -331,36 +242,29 @@ class KMerCountsPipeline(Pipeline):
             raise ValueError('KMerCounter needs to be created before running! \
                              Use create_kmer_counter().')
         if compressor == 'None' or not compressor:
-            self.compressor = KMerCountCompressor(self.counter, 4 ** self.K_, jobs=self.counter.jobs,
-                                                  chunksize=self.counter.chunksize)
+            self.compressor = None
             return
-        elif compressor not in ['PCA', 'IPCA', 'AE']:
+        if compressor not in ['PCA', 'IPCA']:
             raise ValueError('Invalid Compressor Provided')
+
         sample = self.rng.permutation(len(self.dataset))[:int(len(self.dataset) * fit_sample_frac)]
         print('Counting k-mers in compressor fit sample...')
         sample = self.counter.kmer_counts(self.dataset['seqs'].to_numpy()[sample])
         compress_to = repr_size or 4 ** self.K_ // 10 * 2
+
         if compressor == 'PCA':
             self.compressor = KMerCountPCA(self.counter, compress_to, **init_args)
         elif compressor == 'IPCA':
             self.compressor = KMerCountIPCA(self.counter, compress_to, **init_args)
-        elif compressor == 'AE':
-            if 'batch_size' not in init_args:
-                raise ValueError('batch_size must be provided in init_args for AE compressor!')
-            self.compressor = KMerCountAE.auto(self.counter, sample, compress_to, **init_args)
-            if not self.quiet:
-                print('AE Compressor Summary:')
-                self.compressor.summary()
-        # pylint: disable=unidiomatic-typecheck
-        # Strict type check needed here for this conditional
-        if self.model is not None and not self.quiet and type(self.compressor) != Compressor:
+
+        if self.model is not None and not self.silence:
             print('Creating a compressor after the model is not recommended! Consider running  \
                   create_model again.')
         print('Fitting compressor...')
         self.compressor.fit(sample)
 
-    def create_model(self, repr_size=2, embed_dist='euclidean', depth=3, decoder='linear', dist='cosine',
-                     distribute_strategy=None, dist_args=None, dec_args=None, embed_dist_args=None):
+    def create_model(self, repr_size=2, embed_dist='euclidean', depth=3, dist='cosine',
+                     dist_args=None, dec_args=None, embed_dist_args=None):
         """
         Create a Model for this KMerCountsPipeline. Uses all available GPUs.
         """
@@ -370,25 +274,24 @@ class KMerCountsPipeline(Pipeline):
                              Use create_kmer_counter().')
         if dist not in self.DISTS:
             raise ValueError('Invalid argument: dist. Must be one of "cosine", "edit", "euclidean"')
-        dist = self.DISTS[dist](quiet=self.quiet, **(dist_args or {}))
+        dist = self.DISTS[dist](silence=self.silence, **(dist_args or {}))
 
         if not self.compressor:  # Create default (blank) compressor if needed
             self.create_compressor('None')
 
         dec_args = dec_args or {}
-        if decoder == 'dense' and 'batch_size' not in dec_args:
-            raise ValueError('Must pass "batch_size" in param dec_args for dense decoder')
         if 'embed_dist_args' not in dec_args:
             dec_args['embed_dist_args'] = embed_dist_args
-        self.set_decoder(decoder, dist=dist, embed_dist=embed_dist, **dec_args)  # Create decoder
-        builder = ModelBuilder((self.compressor.compress_to,),
-                               distribute_strategy=distribute_strategy or
-                               tf.distribute.MirroredStrategy())
-        builder.dense(self.compressor.compress_to, depth=depth)
+        self.create_decoder(dist=dist, embed_dist=embed_dist, **dec_args)  # Create decoder
+
+        compress_to = self.compressor.compress_to if self.compressor else 4 ** self.K_
+        builder = ModelBuilder((compress_to,))
+        builder.dense(compress_to, depth=depth)
         self.model = ComparativeEncoder.from_model_builder(builder, dist=dist, repr_size=repr_size,
-                                                           quiet=self.quiet, embed_dist=embed_dist,
+                                                           silence=self.silence,
+                                                           embed_dist=embed_dist,
                                                            random_seed=self.rng.integers(2**32))
-        if not self.quiet:
+        if not self.silence:
             self.model.summary()
 
     def preprocess_seqs(self, seqs: list[str], **kwargs) -> np.ndarray:
@@ -406,7 +309,7 @@ class KMerCountsPipeline(Pipeline):
         unique_inds = super().fit(**(preproc_args or {}))
         # If k-mer count based distance and not compressing
         if isinstance(self.model.distance, (Euclidean, Cosine)):
-            if type(self.compressor) == KMerCountCompressor:
+            if isinstance(self.compressor, Compressor):
                 distance_on = self.preproc_reprs  # Feed kmer counts as input
             else:  # kmer based distance with compression
                 # Use an IncrementalDistance to reduce memory usage
@@ -420,7 +323,6 @@ class KMerCountsPipeline(Pipeline):
         self.model.fit(batch_size, self.preproc_reprs[unique_inds],
                        distance_on=distance_on[unique_inds], epoch_factor=epoch_factor, **kwargs)
         self._fit_decoder(dec_args, batch_size, distance_on, epoch_factor=epoch_factor)
-
 
     def save(self, savedir: str):
         super().save(savedir)
@@ -445,11 +347,13 @@ class KMerCountsPipeline(Pipeline):
             result['compressor'] = KMerCountCompressor.load(os.path.join(savedir, 'compressor'))
         return result
 
+
 class SequencePipeline(Pipeline):
     """
     Abstract sequence alignment estimator.
     """
     VOCAB = []  # MUST be defined by subclass
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -484,7 +388,7 @@ class SequencePipeline(Pipeline):
             seq_len = int(target_zscore * std + mean)
 
         dist_args = dist_args or {}
-        dist = EditDistance(quiet=self.quiet, **dist_args)
+        dist = EditDistance(silence=self.silence, **dist_args)
 
         dec_args = dec_args or {}
         if decoder == 'dense' and 'batch_size' not in dec_args:
@@ -499,20 +403,21 @@ class SequencePipeline(Pipeline):
                                             embed_dist=embed_dist, **kwargs)
         elif res == 'medium':
             self.model = self.medium_res_model(seq_len, repr_size=repr_size, dist=dist,
-                                            random_seed=self.rng.integers(2**32),
-                                            embed_dist=embed_dist, **kwargs)
+                                               random_seed=self.rng.integers(2**32),
+                                               embed_dist=embed_dist, **kwargs)
         elif res == 'high':
             self.model = self.high_res_model(seq_len, repr_size=repr_size, dist=dist,
-                                            random_seed=self.rng.integers(2**32),
-                                            embed_dist=embed_dist, **kwargs)
+                                             random_seed=self.rng.integers(2**32),
+                                             embed_dist=embed_dist, **kwargs)
         elif res == 'ultra':
             self.model = self.ultra_res_model(seq_len, repr_size=repr_size, dist=dist,
-                                            random_seed=self.rng.integers(2**32),
-                                            embed_dist=embed_dist, **kwargs)
+                                              random_seed=self.rng.integers(2**32),
+                                              embed_dist=embed_dist, **kwargs)
         else:
-            raise ValueError('Invalid argument: res must be one of "low", "medium", "high", "ultra"')
+            raise ValueError(
+                'Invalid argument: res must be one of "low", "medium", "high", "ultra"')
 
-        if not self.quiet:
+        if not self.silence:
             self.model.summary()
 
     @classmethod
@@ -621,6 +526,7 @@ class HomologousSequencePipeline(SequencePipeline):
     Edit distance of 3 possible forward reading frames.
     """
     VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
+
     def __init__(self, converter=None, **kwargs):
         super().__init__(**kwargs)
         self.converter = converter
@@ -650,4 +556,3 @@ class HomologousSequencePipeline(SequencePipeline):
             with open(os.path.join(savedir, 'converter.pkl'), 'rb') as f:
                 result['converter'] = pickle.load(f)
         return result
-

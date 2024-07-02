@@ -12,7 +12,8 @@ class KMerCounter:
     KMer Counter class that can convert DNA/RNA sequences into sequences of kmers or kmer
     frequency tables. Wraps logic for Python multiprocessing using jobs and chunksize.
     """
-    def __init__(self, k: int, jobs=1, chunksize=1, debug=False, quiet=False):
+
+    def __init__(self, k: int, jobs=1, chunksize=1, debug=False, silence=False):
         """
         KMer Counter class that can convert DNA/RNA sequences into sequences of kmers or kmer
         frequency tables. Wraps logic for Python multiprocessing using jobs and chunksize.
@@ -22,7 +23,7 @@ class KMerCounter:
         self.jobs = jobs
         self.chunksize = chunksize
         self.debug = debug
-        self.quiet = quiet
+        self.silence = silence
         alphabet = np.array(['A', 'C', 'G', 'T', 'U'])
         self.alphabet_pattern = re.compile(f'[^{"".join(alphabet)}]')
 
@@ -55,7 +56,7 @@ class KMerCounter:
         # where val is a 2-bit sequence
         kmers = np.copy(stride[:, -1])  # Start with a new array to store the sum
         for i in range(stride.shape[1] - 2, -1, -1):  # Iterate over columns in reverse
-        # Add this column << (kmer_len - idx) * 2 to sum
+            # Add this column << (kmer_len - idx) * 2 to sum
             kmers += stride[:, i] << (stride.shape[1] - i - 1) * 2
         return kmers
 
@@ -96,9 +97,9 @@ class KMerCounter:
         if not self.debug and jobs > 1:
             with mp.Pool(jobs) as p:
                 it = p.imap(func, seqs, chunksize=chunksize)
-                return list(it if self.quiet or silence else tqdm(it, total=len(seqs)))
+                return list(it if self.silence or silence else tqdm(it, total=len(seqs)))
         else:
-            return [func(i) for i in (seqs if self.quiet or silence else tqdm(seqs))]
+            return [func(i) for i in (seqs if self.silence or silence else tqdm(seqs))]
 
     def kmer_sequences(self, seqs: list[str], **kwargs) -> list[list[int]]:
         """
@@ -178,7 +179,6 @@ class Nucleotide_AA(KMerCounter):
         @param seqs: nucleotide sequences to convert.
         """
         kmers = self.kmer_sequences(seqs)
-        if not self.quiet:
+        if not self.silence:
             print('Converting to amino acid sequences...')
         return np.array(self._apply(self._kmer_seq_to_aa, kmers), dtype=str)
-

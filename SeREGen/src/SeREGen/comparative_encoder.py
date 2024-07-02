@@ -2,9 +2,7 @@
 ComparativeEncoder module, trains a model comparatively using distances.
 """
 import os
-import shutil
 import pickle
-import json
 import time
 import math
 import copy
@@ -21,6 +19,20 @@ from geomstats.geometry.poincare_ball import PoincareBall
 
 from .encoders import ModelBuilder
 from .distance import Hyperbolic, Euclidean, Cosine
+
+
+def _create_save_directory(path):
+    os.makedirs(path, exist_ok=True)
+
+
+def _save_object(obj, path):
+    with open(path, 'wb') as f:
+        pickle.dump(obj, f)
+
+
+def _load_object(path):
+    with open(path, 'rb') as f:
+        return pickle.load(f)
 
 
 class _NormalizedDistanceLayer(nn.Module):
@@ -105,7 +117,7 @@ class ComparativeLayer(nn.Module):
 class ModelTrainer:
     """
     Contains all the necessary code to train a torch model with a nice fit() loop. train_step()
-    must be implemented by subclass.
+    must be implemented by subclass. Can be reused to train different model types.
     """
 
     def __init__(self, model: nn.Module, losses=None, optimizer=None, history=None, silence=False,
@@ -270,18 +282,43 @@ class ModelTrainer:
     def summary(self):
         return summary(self.model)
 
+    def save(self, path):
+        _create_save_directory(path)
+        if self.model is not None:
+            torch.save(self.model, os.path.join(path, 'model.pth'))
+        if self.optimizer is not None:
+            torch.save(self.optimizer, os.path.join(path, 'optimizer.pth'))
+        if self.losses is not None:
+            _save_object(self.losses, os.path.join(path, 'losses.pkl'))
+        _save_object(self.history, os.path.join(path, 'history.pkl'))
+        _save_object(self.properties, os.path.join(path, 'properties.pkl'))
+
+    @classmethod
+    def load(cls, path):
+        trainer = cls.__new__(cls)
+        if os.path.exists(p := os.path.join(path, 'model.pkl')):
+            trainer.model = torch.load(p)
+        if os.path.exists(p := os.path.join(path, 'optimizer.pth')):
+            trainer.optimizer = torch.load(p)
+        if os.path.exists(p := os.path.join(path, 'losses.pkl')):
+            trainer.losses = _load_object(p)
+        trainer.history = _load_object(os.path.join(path, 'history.pkl'))
+        trainer.properties = _load_object(os.path.join(path, 'properties.pkl'))
+        return trainer
+
 
 class ComparativeModel(ModelTrainer):
     """
-    Abstract ComparativeModel class. Stores some useful common functions.
+    Abstract ComparativeModel class. Stores some useful common functions for ComparativeEncoder and
+    Decoder.
     """
 
-    def __init__(self, dist=None, embed_dist='euclidean', model=None, history=None,
-                 silence=False, properties=None, random_seed=None, **kwargs):
+    def __init__(self, dist=None, embed_dist='euclidean', history=None, silence=False,
+                 properties=None, random_seed=None, **kwargs):
         """
         model: tuple of (model, losses, optimizer)
         """
-        model, losses, optimizer = model or self.create_model(**kwargs)
+        model, losses, optimizer = self.create_model(**kwargs)
         super().__init__(
             model,
             losses,
@@ -307,67 +344,17 @@ class ComparativeModel(ModelTrainer):
                             for _ in range(epoch_factor)])
         return x[p1], x[p2], y[p1], y[p2]
 
-    def save(self, path: str, model=None):
-        """
-        Save the model to the given path.
-        @param path: path to save to.
-        """
-        try:
-            os.makedirs(path)
-        except FileExistsError:
-            print("WARN: Directory exists, overwriting...")
-            shutil.rmtree(path)
-            os.makedirs(path)
-        model = model or self.model
-        model.save(os.path.join(path, 'model.h5'))
-        with open(os.path.join(path, 'distance.pkl'), 'wb') as f:
-            pickle.dump(self.distance, f)
-        with open(os.path.join(path, 'embed_dist.txt'), 'w') as f:
-            f.write(self.embed_dist)
-        if self.history:
-            with open(os.path.join(path, 'history.json'), 'w') as f:
-                json.dump(self.history, f)
-        with open(os.path.join(path, 'properties.json'), 'w') as f:
-            json.dump(self.properties, f)
+    def save(self, path):
+        super().save(path)
+        _save_object(self.distance, os.path.join(path, 'distance.pkl'))
+        _save_object(self.embed_dist, os.path.join(path, 'embed_dist.pkl'))
 
     @classmethod
-    def load(cls, path: str, v_scope: str, strategy=None, model=None, **kwargs):
-        """
-        Load the model from the filesystem.
-        """
-        contents = os.listdir(path)
-        if not model:
-            if 'model.h5' not in contents:
-                raise ValueError(
-                    'Model save file is necessary for loading a ComparativeModel!')
-            strategy = strategy or tf.distribute.get_strategy()
-            with tf.name_scope(v_scope):
-                with strategy.scope():
-                    model = tf.keras.models.load_model(
-                        os.path.join(path, 'model.h5'))
-
-        if 'distance.pkl' not in contents:
-            print('Warning: distance save file missing!')
-            dist = None
-        else:
-            with open(os.path.join(path, 'distance.pkl'), 'rb') as f:
-                dist = pickle.load(f)
-        if 'embed_dist.txt' not in contents:
-            print('Warning: embedding distance save file missing, assuming Euclidean')
-            embed_dist = 'euclidean'
-        else:
-            with open(os.path.join(path, 'embed_dist.txt'), 'r') as f:
-                embed_dist = f.read().strip()
-        history = None
-        if 'history.json' in contents:
-            with open(os.path.join(path, 'history.json'), 'r') as f:
-                history = json.load(f)
-        properties = None
-        if 'properties.json' in contents:
-            with open(os.path.join(path, 'properties.json'), 'w') as f:
-                properties = json.load(f)
-        return cls(v_scope=v_scope, dist=dist, model=model, strategy=strategy, history=history,
-                   embed_dist=embed_dist, properties=properties, **kwargs)
+    def load(cls, path):
+        model = super().load(path)
+        model.distance = _load_object(os.path.join(path, 'distance.pkl'))
+        model.embed_dist = _load_object(os.path.join(path, 'embed_dist.pkl'))
+        return model
 
 
 class ComparativeEncoder(ComparativeModel):
@@ -459,7 +446,6 @@ class ComparativeEncoder(ComparativeModel):
         r2 = r ** 2 * (r / torch.abs(r))
         return 1 - r2
 
-    # pylint: disable=arguments-differ
     def train_step(self, data: np.ndarray, distance_on: np.ndarray, batch_size=256, epoch_factor=1):
         """
         Train a single randomized epoch on data and distance_on.
@@ -489,21 +475,11 @@ class ComparativeEncoder(ComparativeModel):
         @param batch_size: Batch size for .predict().
         @return np.ndarray: Representations for all sequences in data.
         """
-        dataset = _prepare_torch_dataset(data, None, batch_size)
+        dataset = self.prepare_torch_dataset(data, None, batch_size)
         reprs = []
         for batch in tqdm(dataset):
             reprs.append(self.encoder(batch))
         return np.concatenate(reprs, axis=0)
-
-    def save(self, path: str):
-        super().save(path, model=self.encoder)
-
-    @classmethod
-    def load(cls, path: str, v_scope='encoder', **kwargs):
-        custom_objects = {
-            'correlation_coefficient_loss': cls.correlation_coefficient_loss}
-        with tf.keras.utils.custom_object_scope(custom_objects):
-            return super().load(path, v_scope, **kwargs)
 
     def summary(self):
         """
@@ -511,14 +487,24 @@ class ComparativeEncoder(ComparativeModel):
         """
         summary(self.encoder)
 
+    def save(self, path):
+        super().save(path)
+        torch.save(self.encoder, os.path.join(path, 'encoder.pth'))
+
+    @classmethod
+    def load(cls, path):
+        model = super().load(path)
+        model.encoder = torch.load(os.path.join(path, 'encoder.pth'))
+        return model
+
 
 class Decoder(ComparativeModel):
     """
     Abstract Decoder for encoding distances.
     """
 
-    def __init__(self, v_scope='decoder', embed_dist_args=None, **kwargs):
-        super().__init__(v_scope, **kwargs)
+    def __init__(self, embed_dist_args=None, **kwargs):
+        super().__init__(**kwargs)
         embed_dist_args = embed_dist_args or {}
         if self.embed_dist == 'hyperbolic':
             self.embed_dist_calc = Hyperbolic(**embed_dist_args)
@@ -529,6 +515,7 @@ class Decoder(ComparativeModel):
         else:  # Should never happen
             raise ValueError(
                 f'Invalid embedding distance for decoder: {self.embed_dist}.')
+        self.regression_model = LinearRegression()
 
     def random_distance_set(self, encodings: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
         """
@@ -543,6 +530,24 @@ class Decoder(ComparativeModel):
         y = self.distance.transform_multi(y1, y2)
         return x, y
 
+    def fit(self, encodings: np.ndarray, distance_on: np.ndarray, *args, **kwargs):
+        """
+        Fit the LinearDecoder to the given data.
+        """
+        # It's common to input pandas series from Dataset instead of numpy array
+        distance_on = distance_on.to_numpy() if isinstance(
+            distance_on, pd.Series) else distance_on
+        x, y = self.random_distance_set(
+            encodings, distance_on, *args, **kwargs)
+        self.regression_model.fit(x.reshape((-1, 1)), y)
+
+    def transform(self, data: np.ndarray, batch_size=None):
+        """
+        Transform the given data.
+        """
+        return self.distance.invert_postprocessing(
+            self.regression_model.predict(data.reshape(-1, 1)))
+
     def evaluate(self, encodings: np.ndarray, distance_on: np.ndarray, sample_size=None):
         """
         Evaluate the performance of the model by seeing how well we can predict true sequence
@@ -554,7 +559,7 @@ class Decoder(ComparativeModel):
         x, y = self.random_distance_set(encodings, distance_on,
                                         epoch_factor=int(sample_size / len(encodings)) + 1)
         self._print('Predicting true distances...')
-        x = self.transform(x)
+        x = self.transform(x, batch_size=None)
         y = self.distance.invert_postprocessing(y)
 
         r2 = r2_score(y, x)
@@ -565,100 +570,11 @@ class Decoder(ComparativeModel):
 
     def save(self, path: str):
         super().save(path)
-        with open(os.path.join(path, 'embed_dist_calc.pkl'), 'wb') as f:
-            pickle.dump(self.embed_dist_calc, f)
+        _save_object(self.embed_dist_calc, os.path.join(path, 'embed_dist_calc.pkl'))
+        _save_object(self.regression_model, os.path.join(path, 'linear_model.pkl'))
 
     @staticmethod
-    def load(path: str, v_scope='decoder', **kwargs):
-        # pylint: disable=arguments-differ
-        contents = os.listdir(path)
-        if 'model.h5.pkl' in contents:
-            obj = LinearDecoder.load(path)
-        else:
-            obj = DenseDecoder.load(path, **kwargs)
-        with open(os.path.join(path, 'embed_dist_calc.pkl'), 'rb') as f:
-            obj.embed_dist_calc = pickle.load(f)
-        return obj
-
-
-class _LinearRegressionModel(LinearRegression):
-    def save(self, path: str):
-        with open(path + '.pkl', 'wb') as f:
-            pickle.dump(self, f)
-
-
-class LinearDecoder(Decoder):
-    """
-    Linear model of a decoder. Useful with correlation coefficient loss.
-    """
-
-    def create_model(self):
-        return _LinearRegressionModel()
-
-    def fit(self, encodings: np.ndarray, distance_on: np.ndarray, *args, **kwargs):
-        """
-        Fit the LinearDecoder to the given data.
-        """
-        # It's common to input pandas series from Dataset instead of numpy array
-        distance_on = distance_on.to_numpy() if isinstance(
-            distance_on, pd.Series) else distance_on
-        x, y = self.random_distance_set(
-            encodings, distance_on, *args, **kwargs)
-        self.model.fit(x.reshape((-1, 1)), y)
-
-    def transform(self, data: np.ndarray):
-        """
-        Transform the given data.
-        """
-        return self.distance.invert_postprocessing(self.model.predict(data.reshape(-1, 1)))
-
-    @classmethod
-    def load(cls, path: str, **kwargs):
-        with open(os.path.join(path, 'model.h5.pkl'), 'rb') as f:
-            model = pickle.load(f)
-        return super(Decoder, cls).load(path, 'decoder', model=model, **kwargs)
-
-
-class DenseDecoder(Decoder):
-    """
-    Decoder model to convert generated distances into true distances.
-    """
-
-    def __init__(self, batch_size: int, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.batch_size = batch_size
-
-    def create_model(self):
-        optimizer = torch.optim.Adam(comparative_model.parameters(), lr=lr, **adam_kwargs)
-        losses = {'loss': nn.MSELoss()}
-        return nn.Sequential(
-            nn.Linear(1, 10),
-            nn.ReLU(),
-            nn.Linear(10, 10),
-            nn.Dropout(.1),
-            nn.Linear(10, 10),
-            nn.ReLU()
-        ), optimizer, losses
-
-    def fit(self, *args, epochs=25, **kwargs):
-        """
-        The decoder is probably an afterthought, 25 epochs seems like a sensible default to avoid
-        adding too much overhead.
-        """
-        return super().fit(*args, epochs=epochs, **kwargs)
-
-    def train_step(self, encodings: np.ndarray, distance_on: np.ndarray, epoch_factor=1):
-        # It's common to input pandas series from Dataset instead of numpy array
-        distance_on = distance_on.to_numpy() if isinstance(distance_on, pd.Series) else distance_on
-        x, y = self.random_distance_set(encodings, distance_on, epoch_factor=epoch_factor)
-        return super().train_step(x, y, self.batch_size)
-
-    def transform(self, data: np.ndarray) -> np.ndarray:
-        """
-        Transform the given distances between this model's encodings into predicted true distances.
-        """
-        return self.distance.invert_postprocessing(super().transform(data))
-
-    @classmethod
-    def load(cls, path: str, v_scope='decoder', **kwargs):
-        return super(Decoder, cls()).load(path, v_scope, **kwargs)
+    def load(path: str):
+        decoder = super().load(path)
+        decoder.embed_dist_calc = _load_object(os.path.join(path, 'embed_dist_calc.pkl'))
+        decoder.regression_model = _load_object(os.path.join(path, 'linear_model.pkl'))
