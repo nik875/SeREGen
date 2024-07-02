@@ -118,12 +118,16 @@ class ModelTrainer:
         self.losses = losses
         self.optimizer = optimizer
 
+    def _print(self, *args, **kwargs):
+        if not self.silence:
+            print(*args, **kwargs)
+
     @staticmethod
     def prepare_torch_dataset(x, y=None, batch_size=256):
         """
         Prepare a PyTorch dataset and dataloader from input tensors.
 
-        @param x: Input tensor(s) or numpy array(s). Can be a single input or a list/tuple of inputs.
+        @param x: Input tensor(s) or numpy array(s). Can be a single input or a list/tuple of inputs
         @param y: Target tensor or numpy array. Optional for cases where there's no target.
         @param batch_size: Batch size for the dataloader
         @return: PyTorch DataLoader
@@ -155,7 +159,7 @@ class ModelTrainer:
         """
         Abstract single epoch of training.
         """
-        dataloader = _prepare_torch_dataset(x, y, batch_size)
+        dataloader = self.prepare_torch_dataset(x, y, batch_size)
         epoch_loss = 0.0
         self.model.train()
         progress_bar = dataloader if self.silence else tqdm(
@@ -257,7 +261,7 @@ class ModelTrainer:
         @param batch_size: Batch size for DataLoader.
         @return np.ndarray: Model output for all inputs.
         """
-        dataset = _prepare_torch_dataset(data, None, batch_size)
+        dataset = self.prepare_torch_dataset(data, None, batch_size)
         results = []
         for batch in tqdm(dataset):
             results.append(self.model(batch))
@@ -289,10 +293,6 @@ class ComparativeModel(ModelTrainer):
         )
         self.distance = dist
         self.embed_dist = embed_dist
-
-    def _print(self, *args, **kwargs):
-        if not self.silence:
-            print(*args, **kwargs)
 
     def create_model(self):
         """
@@ -478,7 +478,6 @@ class ComparativeEncoder(ComparativeModel):
         y = self.distance.transform_multi(y1, y2)
         return super().train_step((x1, x2), y, batch_size)
 
-
     def fit(self, *args, distance_on=None, **kwargs):
         distance_on = distance_on if distance_on is not None else args[1]
         super().fit(*args, distance_on, **kwargs)
@@ -592,6 +591,7 @@ class LinearDecoder(Decoder):
     """
     Linear model of a decoder. Useful with correlation coefficient loss.
     """
+
     def create_model(self):
         return _LinearRegressionModel()
 
