@@ -164,7 +164,7 @@ class ModelBuilder:
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
 
-    def __init__(self, input_shape: tuple, input_dtype=None):
+    def __init__(self, input_shape: tuple, input_dtype=None, is_text_input=False):
         """
         Create a new ModelBuilder object.
         @param input_shape: Shape of model input.
@@ -173,6 +173,7 @@ class ModelBuilder:
         """
         self.input_shape = input_shape
         self.input_dtype = input_dtype or torch.float32
+        self.is_text_input = is_text_input
         self.layers = nn.ModuleList()
 
     @classmethod
@@ -189,7 +190,7 @@ class ModelBuilder:
         @param max_len: Length to trim and pad input sequences to.
         @return ModelBuilder: Newly created object.
         """
-        obj = cls((1,), input_dtype=torch.long, **kwargs)
+        obj = cls((1,), input_dtype=torch.long, is_text_input=True, **kwargs)
         obj.text_vectorization(vocab, embed_dim, max_len, embeddings=embeddings)
         return obj
 
@@ -229,7 +230,7 @@ class ModelBuilder:
         Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size
         """
         with torch.no_grad():
-            if self.input_dtype == torch.string:
+            if self.is_text_input:
                 # For text input, create a random string
                 x = [''.join(random.choices(string.ascii_lowercase, k=10))]
             else:

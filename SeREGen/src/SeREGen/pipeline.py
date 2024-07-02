@@ -102,16 +102,6 @@ class Pipeline:
             print("Training Distance Decoder...")
         self.decoder.fit(self.reprs, distance_on, **kwargs)
 
-    def _fit_decoder(self, dec_args: dict, batch_size: int, *args, **kwargs):
-        """
-        Adds defaults to dec_args before calling fit_decoder.
-        """
-        dec_args = dec_args or {}
-        if 'transform_batch_size' not in dec_args:
-            # Use the encoder's batch_size to transform
-            dec_args['transform_batch_size'] = batch_size
-        self.fit_decoder(*args, **(kwargs | dec_args))
-
     def _fit_called_check(self):
         if self.preproc_reprs is None:
             raise ValueError('Fit must be called before transform!')
@@ -224,7 +214,6 @@ class KMerCountsPipeline(Pipeline):
         super().__init__(**kwargs)
         self.counter = counter
         self.K_ = self.counter.k if self.counter else None
-        self.input_dim =
         self.compressor = compressor
 
     def create_kmer_counter(self, K: int, **kwargs):
@@ -276,9 +265,6 @@ class KMerCountsPipeline(Pipeline):
             raise ValueError('Invalid argument: dist. Must be one of "cosine", "edit", "euclidean"')
         dist = self.DISTS[dist](silence=self.silence, **(dist_args or {}))
 
-        if not self.compressor:  # Create default (blank) compressor if needed
-            self.create_compressor('None')
-
         dec_args = dec_args or {}
         if 'embed_dist_args' not in dec_args:
             dec_args['embed_dist_args'] = embed_dist_args
@@ -295,7 +281,9 @@ class KMerCountsPipeline(Pipeline):
             self.model.summary()
 
     def preprocess_seqs(self, seqs: list[str], **kwargs) -> np.ndarray:
-        return self.compressor.transform(seqs, **kwargs)
+        if self.compressor is not None:
+            return self.compressor.transform(seqs, **kwargs)
+        return self.counter.transform(seqs, **kwargs)
 
     def fit(self, batch_size: int, preproc_args=None, dec_args=None, epoch_factor=1, **kwargs):
         """
@@ -307,22 +295,20 @@ class KMerCountsPipeline(Pipeline):
 
         # Always preprocess (with compression) since this is necessary for model.
         unique_inds = super().fit(**(preproc_args or {}))
-        # If k-mer count based distance and not compressing
         if isinstance(self.model.distance, (Euclidean, Cosine)):
-            if isinstance(self.compressor, Compressor):
+            if self.compressor is None:  # If k-mer count based distance and not compressing
                 distance_on = self.preproc_reprs  # Feed kmer counts as input
             else:  # kmer based distance with compression
                 # Use an IncrementalDistance to reduce memory usage
                 self.model.distance = IncrementalDistance(self.model.distance, self.counter)
                 self.decoder.distance = IncrementalDistance(self.decoder.distance, self.counter)
                 distance_on = self.dataset['seqs'].to_numpy()
-        else:
-            # IncrementalDistance takes sequences as input
+        else:  # Distance not based on kmer counts, use sequences as input
             distance_on = self.dataset['seqs'].to_numpy()
 
         self.model.fit(batch_size, self.preproc_reprs[unique_inds],
                        distance_on=distance_on[unique_inds], epoch_factor=epoch_factor, **kwargs)
-        self._fit_decoder(dec_args, batch_size, distance_on, epoch_factor=epoch_factor)
+        self.fit_decoder(distance_on, batch_size, epoch_factor=epoch_factor, **dec_args)
 
     def save(self, savedir: str):
         super().save(savedir)
@@ -330,10 +316,6 @@ class KMerCountsPipeline(Pipeline):
             pickle.dump(self.counter, f)
         if self.compressor is not None:
             self.compressor.save(os.path.join(savedir, 'compressor'))
-
-    @classmethod
-    def load(cls, *args, **kwargs):
-        return super().load(*args, strategy=tf.distribute.MirroredStrategy(), **kwargs)
 
     @staticmethod
     def _load_special(savedir: str):
@@ -350,12 +332,9 @@ class KMerCountsPipeline(Pipeline):
 
 class SequencePipeline(Pipeline):
     """
-    Abstract sequence alignment estimator.
+    Abstract sequence alignment estimator. Define VOCAB in subclass.
     """
     VOCAB = []  # MUST be defined by subclass
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
 
     def create_model(self, res='low', seq_len=.9, repr_size=2, embed_dist='euclidean', decoder='linear',
                      dec_args=None, dist_args=None, embed_dist_args=None, **kwargs):
@@ -425,8 +404,7 @@ class SequencePipeline(Pipeline):
         """
         Basic dense neural network operating on top of learned embeddings for input sequences.
         """
-        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=8, max_len=seq_len,
-                                          distribute_strategy=tf.distribute.MirroredStrategy())
+        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=8, max_len=seq_len)
         builder.transpose()
         builder.dense(seq_len // compress_factor, depth=depth)
         builder.transpose()
@@ -439,8 +417,7 @@ class SequencePipeline(Pipeline):
         """
         Convolutional layer operating on 1/4 the length of input sequences.
         """
-        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=12, max_len=seq_len,
-                                          distribute_strategy=tf.distribute.MirroredStrategy())
+        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=12, max_len=seq_len)
         builder.transpose()
         if dense_depth:
             builder.dense(seq_len, depth=dense_depth)
@@ -456,8 +433,7 @@ class SequencePipeline(Pipeline):
         """
         Convolutional layer + attention block operating on 1/4 the length of input sequences.
         """
-        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=16, max_len=seq_len,
-                                          distribute_strategy=tf.distribute.MirroredStrategy())
+        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=16, max_len=seq_len)
         builder.transpose()
         if dense_depth:
             builder.dense(seq_len, depth=dense_depth)
@@ -475,8 +451,7 @@ class SequencePipeline(Pipeline):
         """
         Convolutional layer + attention block operating on full length of input sequences.
         """
-        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=20, max_len=seq_len,
-                                          distribute_strategy=tf.distribute.MirroredStrategy())
+        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=20, max_len=seq_len)
         builder.transpose()
         if dense_depth:
             builder.dense(seq_len, depth=dense_depth)
@@ -500,11 +475,7 @@ class SequencePipeline(Pipeline):
 
         self.model.fit(batch_size, self.preproc_reprs[unique_inds], epoch_factor=epoch_factor,
                        **kwargs)
-        self._fit_decoder(dec_args, batch_size, self.preproc_reprs, epoch_factor=epoch_factor)
-
-    @classmethod
-    def load(cls, *args, **kwargs):
-        return super().load(*args, strategy=tf.distribute.MirroredStrategy(), **kwargs)
+        self.fit_decoder(self.preproc_reprs, batch_size, epoch_factor=epoch_factor, **dec_args)
 
 
 class DNASequencePipeline(SequencePipeline):
