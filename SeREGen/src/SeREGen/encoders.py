@@ -14,8 +14,10 @@ from torchinfo import summary
 
 
 class IncompatibleDimensionsException(Exception):
-    def __init__(self):
-        self.message = "Previous layer shape is incompatible with this layer's shape!"
+    def __init__(self, message=None, prev_shape=None):
+        self.message = message or "Previous layer shape is incompatible with this layer's shape!"
+        if prev_shape:
+            self.message += f" Previous shape: {prev_shape}"
         super().__init__(self.message)
 
 
@@ -25,6 +27,7 @@ class _CustomLayer(nn.Module):
     """
 
     def __init__(self, **config):
+        super().__init__()
         self.config = config
 
     def __repr__(self):
@@ -68,7 +71,8 @@ class OneHotEncoding(_CustomLayer):
         super().__init__(depth=depth)
 
     def forward(self, inputs):
-        return nn.functional.one_hot(inputs.to(torch.int64), num_classes=self.config['depth'])
+        encoded = nn.functional.one_hot(inputs.to(torch.int64), num_classes=self.config['depth'])
+        return encoded.to(torch.float32)
 
 
 class TextVectorizer(_CustomLayer):
@@ -103,7 +107,7 @@ class TextVectorizer(_CustomLayer):
 
         if self.embedding is not None:
             padded = self.embedding(padded)
-        return padded
+        return padded.to(torch.float32)
 
 
 class ClipNorm(_CustomLayer):
@@ -111,7 +115,7 @@ class ClipNorm(_CustomLayer):
         super().__init__(clip_norm=clip_norm)
 
     def forward(self, x):
-        return nn.utils.clip_grad_norm(x, max_norm=self.clip_norm)
+        return nn.utils.clip_grad_norm(x, max_norm=self.config['clip_norm'])
 
 
 class SoftClipNorm(_CustomLayer):
@@ -120,7 +124,7 @@ class SoftClipNorm(_CustomLayer):
 
     def forward(self, x):
         norm = torch.norm(x, dim=-1, keepdims=True)
-        scaled_norm = self.scale * norm
+        scaled_norm = self.config['scale'] * norm
         soft_clip_factor = torch.tanh(scaled_norm) / scaled_norm
         return x * soft_clip_factor
 
@@ -133,7 +137,7 @@ class L2Normalize(_CustomLayer):
     def forward(self, x):
         min_scale = 1e-7
         max_scale = 1 - 1e3
-        normalized = nn.functional.normalize(x, p=2, dim=self.dim, eps=self.eps)
+        normalized = nn.functional.normalize(x, p=2, dim=self.config['dim'], eps=self.config['eps'])
         scaled = normalized * self.radius.clamp(min=min_scale, max=max_scale)
         return scaled
 
@@ -218,27 +222,20 @@ class ModelBuilder:
         """
         self.layers.append(nn.Embedding(input_dim, output_dim, padding_idx=padding_idx, **kwargs))
 
-    def summary(self):
+    def summary(self, **kwargs):
         """
         Display a summary of the model as it currently stands.
         """
         model = nn.Sequential(*self.layers)
-        summary(model, input_size=(-1, *self.input_shape), dtypes=[self.input_dtype])
+        return summary(model, input_size=(1, *self.input_shape), dtypes=[self.input_dtype],
+                       **kwargs)
 
     def shape(self) -> tuple:
         """
         Returns the shape of the output layer as a tuple. Excludes the first dimension of batch size
         """
-        with torch.no_grad():
-            if self.is_text_input:
-                # For text input, create a random string
-                x = [''.join(random.choices(string.ascii_lowercase, k=10))]
-            else:
-                x = torch.randn(1, *self.input_shape).to(self.input_dtype)
-
-            for layer in self.layers:
-                x = layer(x)
-        return tuple(x.shape[1:])
+        summary_str = self.summary(verbose=0)
+        return tuple(summary_str.summary_list[-1].output_size[1:])
 
     def compile(self, repr_size=None, embed_space='euclidean',
                 norm_type='soft_clip', name='encoder'):
@@ -265,7 +262,18 @@ class ModelBuilder:
 
         model = nn.Sequential(*self.layers)
         model.name = name
-        return model
+
+        # Create properties dict
+        properties = {
+            'input_shape': self.input_shape,
+            'input_dtype': self.input_dtype,
+            'repr_size': repr_size if repr_size else self.shape()[-1],
+            'depth': len(self.layers),
+            'embed_dist': embed_space,
+            'norm_type': norm_type
+        }
+
+        return model, properties
 
     def custom_layer(self, layer: nn.Module):
         """
@@ -307,7 +315,12 @@ class ModelBuilder:
         """
         Add a batch normalization to the model.
         """
-        self.layers.append(nn.BatchNorm1d(output_size))
+        if len(self.shape()) == 3:
+            self.layers.append(nn.BatchNorm2d(output_size))
+        elif len(self.shape()) == 2:
+            self.layers.append(nn.BatchNorm1d(output_size))
+        else:
+            raise IncompatibleDimensionsException('Model dims not either 1 or 2')
 
     def dense(self, output_size: int, depth=1, activation='relu'):
         """
@@ -318,8 +331,9 @@ class ModelBuilder:
         Additional keyword arguments are passed to TensorFlow Dense layer constructor.
         """
         for _ in range(depth):
-            self.layers.append(nn.Linear(self.shape()[-1], output_size))
-            self.batch_norm(output_size)
+            self.layers.append(nn.Linear(self.shape()[-1], output_size, dtype=torch.float32))
+            if 1 < len(self.shape()) < 4:
+                self.batch_norm(self.shape()[-2])
             if activation is not None:
                 self.layers.append(nn.ReLU() if activation == 'relu' else activation)
 
@@ -337,15 +351,16 @@ class ModelBuilder:
         shape = self.shape()
         if len(shape) != 2:
             raise IncompatibleDimensionsException()
-        if kernel_size >= shape[0]:
+        if kernel_size >= shape[1]:
             raise IncompatibleDimensionsException()
 
-        self.layers.append(nn.Conv1D(shape[1], filters, kernel_size))
+        self.layers.append(nn.Conv1d(shape[0], filters, kernel_size))
         self.layers.append(nn.ReLU())
         self.layers.append(nn.MaxPool1d(2))
-        self.layers.append(nn.Flatten())
-        self.batch_norm(filters * ((self.shape()[0] - kernel_size + 1) // 2))
-        self.dense(output_size, activation='relu')
+        conv_output_size = (shape[1] - kernel_size + 1) // 2
+        self.batch_norm(filters)
+        self.layers.append(nn.Conv1d(in_channels=filters, out_channels=output_size, kernel_size=1))
+        self.layers.append(nn.ReLU())
 
     def attention(self, num_heads: int, output_size: int):
         """
@@ -354,10 +369,9 @@ class ModelBuilder:
         @param output_size: Output size.
         @param rate: Dropout rate for AttentionBlock.
         """
-        shape = self.shape()
-        if len(shape) != 2:
-            raise IncompatibleDimensionsException()
-        self.layers.append(AttentionBlock(shape[1], num_heads, output_size))
+        if len(self.shape()) != 2:
+            raise IncompatibleDimensionsException(prev_shape=self.shape())
+        self.layers.append(AttentionBlock(self.shape()[1], num_heads, output_size))
 
     def save_model(self, path: str):
         """

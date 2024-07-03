@@ -42,7 +42,7 @@ class _NormalizedDistanceLayer(nn.Module):
     """
 
     def __init__(self, **kwargs):
-        super().__init__(name='dist', **kwargs)
+        super().__init__(**kwargs)
         self.scaling_param = nn.Parameter(torch.ones(1))
 
     def norm(self, dists):
@@ -280,7 +280,8 @@ class ModelTrainer:
         return np.concatenate(results, axis=0)
 
     def summary(self):
-        return summary(self.model)
+        return summary(self.model, input_size=(1, *self.properties['input_shape']),
+                       dtypes=[self.properties['input_dtype']])
 
     def save(self, path):
         _create_save_directory(path)
@@ -314,10 +315,21 @@ class ComparativeModel(ModelTrainer):
     """
 
     def __init__(self, dist=None, embed_dist='euclidean', history=None, silence=False,
-                 properties=None, random_seed=None, **kwargs):
+                 properties=None, random_seed=None, repr_size=None, **kwargs):
         """
         model: tuple of (model, losses, optimizer)
         """
+        self.distance = dist
+        self.embed_dist = embed_dist
+        self.properties = properties
+        if 'embed_dist' not in self.properties:
+            self.properties['embed_dist'] = embed_dist
+        if 'repr_size' not in self.properties:
+            if repr_size is not None:
+                self.properties['repr_size'] = repr_size
+            else:
+                raise ValueError('repr_size must be proved as argument or in properties dict')
+
         model, losses, optimizer = self.create_model(**kwargs)
         super().__init__(
             model,
@@ -325,11 +337,9 @@ class ComparativeModel(ModelTrainer):
             optimizer,
             history,
             silence,
-            properties,
+            self.properties,
             random_seed,
         )
-        self.distance = dist
-        self.embed_dist = embed_dist
 
     def create_model(self):
         """
@@ -368,13 +378,8 @@ class ComparativeEncoder(ComparativeModel):
         @param reg_dims: Whether to use regularization on dimensions.
         @param properties: Custom properties to override defaults.
         """
-        default_properties = {
-            'input_shape': model.layers[0].output.shape[1:],
-            'input_dtype': model.layers[0].dtype,
-            'repr_size': model.layers[-1].output.shape[1],
-            'depth': len(model.layers),
-            'reg_dims': reg_dims
-        }
+        properties = properties or {}
+        properties['reg_dims'] = reg_dims
         self.encoder = model
         super().__init__(properties=properties or default_properties, **kwargs)
 
@@ -405,8 +410,9 @@ class ComparativeEncoder(ComparativeModel):
         Initialize a ComparativeEncoder from a ModelBuilder object. Easy way to propagate the
         distribute strategy and variable scope. Also automatically adds a clip_norm for hyperbolic.
         """
-        encoder = builder.compile(repr_size=repr_size, norm_type=norm_type, embed_space=embed_dist)
-        return cls(encoder, strategy=builder.strategy, embed_dist=embed_dist, **kwargs)
+        encoder, properties = builder.compile(repr_size=repr_size, norm_type=norm_type,
+                                              embed_space=embed_dist)
+        return cls(encoder, properties=properties, embed_dist=embed_dist, **kwargs)
 
     @staticmethod
     def reg_loss(y_pred):
@@ -485,7 +491,15 @@ class ComparativeEncoder(ComparativeModel):
         """
         Prints a summary of the encoder.
         """
-        summary(self.encoder)
+        return summary(self.encoder, input_size=(1, *self.properties['input_shape']),
+                       dtypes=[self.properties['input_dtype']])
+
+    def comparative_model_summary(self):
+        """
+        Prints a summary of the comparative encoder.
+        """
+        return summary(self.model, input_size=[(1, *self.properties['input_shape'])] * 2,
+                       dtypes=[self.properties['input_dtype']] * 2)
 
     def save(self, path):
         super().save(path)
