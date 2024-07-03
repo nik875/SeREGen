@@ -28,6 +28,7 @@ class _CustomLayer(nn.Module):
 
     def __init__(self, **config):
         super().__init__()
+        self.layer_dtype = torch.float32  # TODO: MAKE SAVABLE PARAMETER
         self.config = config
 
     def __repr__(self):
@@ -43,11 +44,11 @@ class AttentionBlock(_CustomLayer):
 
     def __init__(self, embed_dim, num_heads, ff_dim):
         super().__init__(embed_dim=embed_dim, num_heads=num_heads, ff_dim=ff_dim)
-        self.att = nn.MultiheadAttention(embed_dim, num_heads)
+        self.att = nn.MultiheadAttention(embed_dim, num_heads, dtype=self.layer_dtype)
         self.ffn = nn.Sequential(
-            nn.Linear(embed_dim, ff_dim),
+            nn.Linear(embed_dim, ff_dim, dtype=self.layer_dtype),
             nn.ReLU(),
-            nn.Linear(ff_dim, embed_dim)
+            nn.Linear(ff_dim, embed_dim, dtype=self.layer_dtype)
         )
         self.layernorm1 = nn.LayerNorm(embed_dim)
         self.layernorm2 = nn.LayerNorm(embed_dim)
@@ -88,7 +89,8 @@ class TextVectorizer(_CustomLayer):
         self.vocab = build_vocab_from_iterator(vocab, specials=['<unk>', '<pad>'])
         self.vocab.set_default_index(self.vocab['<unk>'])
         self.embedding = nn.Embedding(len(self.vocab), embed_dim,
-                                      padding_idx=self.vocab['<pad>']) if embeddings else None
+                                      padding_idx=self.vocab['<pad>'], dtype=self.layer_dtype) \
+            if embeddings else None
 
     def forward(self, text):
         if isinstance(text, str):
@@ -115,7 +117,7 @@ class ClipNorm(_CustomLayer):
         super().__init__(clip_norm=clip_norm)
 
     def forward(self, x):
-        return nn.utils.clip_grad_norm(x, max_norm=self.config['clip_norm'])
+        return torch.clamp(x, min=-self.config['clip_norm'], max=self.config['clip_norm'])
 
 
 class SoftClipNorm(_CustomLayer):
@@ -123,7 +125,7 @@ class SoftClipNorm(_CustomLayer):
         super().__init__(scale=scale)
 
     def forward(self, x):
-        norm = torch.norm(x, dim=-1, keepdims=True)
+        norm = torch.norm(x, dim=-1, keepdim=True)
         scaled_norm = self.config['scale'] * norm
         soft_clip_factor = torch.tanh(scaled_norm) / scaled_norm
         return x * soft_clip_factor
@@ -167,6 +169,7 @@ class ModelBuilder:
     """
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
+    LAYER_DTYPES = torch.float32
 
     def __init__(self, input_shape: tuple, input_dtype=None, is_text_input=False):
         """
@@ -302,7 +305,7 @@ class ModelBuilder:
         """
         Add a flatten layer. Additional keyword arguments accepted.
         """
-        self.layers.append(nn.Flatten())
+        self.layers.append(nn.Flatten(start_dim=1))
 
     def dropout(self, rate):
         """
@@ -316,9 +319,9 @@ class ModelBuilder:
         Add a batch normalization to the model.
         """
         if len(self.shape()) == 3:
-            self.layers.append(nn.BatchNorm2d(output_size))
+            self.layers.append(nn.BatchNorm2d(output_size, dtype=self.LAYER_DTYPES))
         elif len(self.shape()) == 2:
-            self.layers.append(nn.BatchNorm1d(output_size))
+            self.layers.append(nn.BatchNorm1d(output_size, dtype=self.LAYER_DTYPES))
         else:
             raise IncompatibleDimensionsException('Model dims not either 1 or 2')
 
@@ -331,7 +334,7 @@ class ModelBuilder:
         Additional keyword arguments are passed to TensorFlow Dense layer constructor.
         """
         for _ in range(depth):
-            self.layers.append(nn.Linear(self.shape()[-1], output_size, dtype=torch.float32))
+            self.layers.append(nn.Linear(self.shape()[-1], output_size, dtype=self.LAYER_DTYPES))
             if 1 < len(self.shape()) < 4:
                 self.batch_norm(self.shape()[-2])
             if activation is not None:
@@ -354,12 +357,13 @@ class ModelBuilder:
         if kernel_size >= shape[1]:
             raise IncompatibleDimensionsException()
 
-        self.layers.append(nn.Conv1d(shape[0], filters, kernel_size))
+        self.layers.append(nn.Conv1d(shape[0], filters, kernel_size, dtype=self.LAYER_DTYPES))
         self.layers.append(nn.ReLU())
         self.layers.append(nn.MaxPool1d(2))
         conv_output_size = (shape[1] - kernel_size + 1) // 2
         self.batch_norm(filters)
-        self.layers.append(nn.Conv1d(in_channels=filters, out_channels=output_size, kernel_size=1))
+        self.layers.append(nn.Conv1d(in_channels=filters, out_channels=output_size, kernel_size=1,
+                                     dtype=self.LAYER_DTYPES))
         self.layers.append(nn.ReLU())
 
     def attention(self, num_heads: int, output_size: int):

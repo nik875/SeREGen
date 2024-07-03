@@ -17,10 +17,10 @@ class Distance:
     Downstream subclasses must implement transform.
     """
 
-    def __init__(self, jobs=1, chunksize=1, quiet=False):
+    def __init__(self, jobs=1, chunksize=1, silence=False):
         self.jobs = jobs
         self.chunksize = chunksize
-        self.quiet = quiet
+        self.silence = silence
 
     # pylint: disable=unused-argument
     def transform(self, pair: tuple) -> int:
@@ -47,12 +47,12 @@ class Distance:
         Transform two large arrays of data.
         """
         if self.jobs == 1 or len(y1) < self.chunksize:
-            it = zip(y1, y2) if self.quiet or silence else tqdm(zip(y1, y2), total=len(y1))
+            it = zip(y1, y2) if self.silence or silence else tqdm(zip(y1, y2), total=len(y1))
             y = np.fromiter((self.transform(i) for i in it), dtype=np.float64)
         else:
             with mp.Pool(self.jobs) as p:
                 it = p.imap(self.transform, zip(y1, y2), chunksize=self.chunksize)
-                y = np.fromiter((it if self.quiet or silence else tqdm(it, total=len(y1))),
+                y = np.fromiter((it if self.silence or silence else tqdm(it, total=len(y1))),
                                 dtype=np.float64)
         y = self.postprocessor(y)  # Vectorized transformations are applied here
         return y
@@ -79,7 +79,7 @@ class VectorizedDistance(Distance):
         y2_split = np.array_split(y2, len(y1) // self.chunksize)
         with mp.Pool(self.jobs) as p:
             it = p.imap(self.transform, zip(y1_split, y2_split), chunksize=1)
-            y = list(it if self.quiet or silence else tqdm(it, total=len(y1_split)))
+            y = list(it if self.silence or silence else tqdm(it, total=len(y1_split)))
             y = np.concatenate(y)
         y = self.postprocessor(y)
         return y

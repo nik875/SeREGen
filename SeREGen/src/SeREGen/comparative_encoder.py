@@ -204,11 +204,11 @@ class ModelTrainer:
         """
         In the first epoch, modify only the scaling parameter with a higher LR.
         """
-        orig_lr = self.model.optimizer.param_groups[0]['lr']
-        for param_group in self.model.optimizer.param_groups:
+        orig_lr = self.optimizer.param_groups[0]['lr']
+        for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
         self.train_step(*args, **kwargs)
-        for param_group in self.model.optimizer.param_groups:
+        for param_group in self.optimizer.param_groups:
             param_group['lr'] = orig_lr
 
     def fit(self, *args, epochs=100, early_stop=True,
@@ -227,6 +227,8 @@ class ModelTrainer:
         if first_ep_lr:
             self._print('Running fast first epoch...')
             self.first_epoch(*args, lr=first_ep_lr, **kwargs)
+        if 'loss' not in self.history or not isinstance(self.history['loss'], list):
+            self.history['loss'] = []
 
         wait = 0
         best_state_dict = copy.deepcopy(self.model.state_dict())
@@ -237,11 +239,11 @@ class ModelTrainer:
             this_history = self.train_step(*args, **kwargs)  # Run the train step
             self._print(f'Epoch time: {time.time() - start}')
 
-            self.history = {k: v + this_history[k] for k, v in self.history.items()} if \
-                self.history else this_history  # Update the loss history
+            self.history['loss'].append(this_history['loss'])
 
-            prev_best = min(self.history['loss'][:-1])
             this_loss = self.history['loss'][-1]
+            prev_best = min(self.history['loss'][:-1]) if len(self.history['loss']) > 1 else \
+                this_loss  # Make sure prev_best is the same as this_loss at beginning
 
             if math.isnan(this_loss) or this_loss == 0:  # Divergence detection
                 self._print('Stopping due to numerical instability, loss converges (0) or ' +
@@ -275,7 +277,7 @@ class ModelTrainer:
         """
         dataset = self.prepare_torch_dataset(data, None, batch_size)
         results = []
-        for batch in tqdm(dataset):
+        for batch in (dataset if self.silence else tqdm(dataset)):
             results.append(self.model(batch))
         return np.concatenate(results, axis=0)
 
@@ -388,12 +390,14 @@ class ComparativeEncoder(ComparativeModel):
             self.encoder,
             self.embed_dist,
             self.properties['reg_dims'],
-            self.properties['repr_size'])
+            self.properties['repr_size']).float()
 
         if loss == 'corr_coef':
             losses = {'dist': self.correlation_coefficient_loss}
         elif loss == 'r2':
             losses = {'dist': self.r2_loss}
+        elif loss == 'mse':
+            losses = {'dist': nn.MSELoss()}
         else:
             losses = {'dist': loss}
 
@@ -483,7 +487,7 @@ class ComparativeEncoder(ComparativeModel):
         """
         dataset = self.prepare_torch_dataset(data, None, batch_size)
         reprs = []
-        for batch in tqdm(dataset):
+        for batch in (dataset if self.silence else tqdm(dataset)):
             reprs.append(self.encoder(batch))
         return np.concatenate(reprs, axis=0)
 
