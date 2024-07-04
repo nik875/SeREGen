@@ -125,7 +125,7 @@ class SoftClipNorm(_CustomLayer):
         super().__init__(scale=scale)
 
     def forward(self, x):
-        norm = torch.norm(x, dim=-1, keepdim=True)
+        norm = torch.norm(x, dim=-1, keepdim=True).clamp_min(1e5)
         scaled_norm = self.config['scale'] * norm
         soft_clip_factor = torch.tanh(scaled_norm) / scaled_norm
         return x * soft_clip_factor
@@ -250,18 +250,17 @@ class ModelBuilder:
         if repr_size:
             self.flatten()
             self.dense(repr_size, activation=None)  # Create special output layer
-        if embed_space == 'hyperbolic':
-            if norm_type == 'clip':
-                self.custom_layer(ClipNorm(1))
-            elif norm_type == 'soft_clip':
-                self.custom_layer(SoftClipNorm(1))
-            elif norm_type == 'scale_down':
-                self.custom_layer(DynamicNormScaling())
-            elif norm_type == 'l2':
-                self.custom_layer(L2Normalize())
-            else:
-                print('WARN: Empty/invalid norm_type, compiling hyperbolic model without ' +
-                      'normalization...')
+        if norm_type == 'clip':
+            self.custom_layer(ClipNorm(1))
+        elif norm_type == 'soft_clip':
+            self.custom_layer(SoftClipNorm(1))
+        elif norm_type == 'scale_down':
+            self.custom_layer(DynamicNormScaling())
+        elif norm_type == 'l2':
+            self.custom_layer(L2Normalize())
+        elif embed_space == 'hyperbolic':
+            print('WARN: Empty/invalid norm_type, compiling hyperbolic model without ' +
+                  'normalization...')
 
         model = nn.Sequential(*self.layers)
         model.name = name
@@ -334,7 +333,10 @@ class ModelBuilder:
         Additional keyword arguments are passed to TensorFlow Dense layer constructor.
         """
         for _ in range(depth):
-            self.layers.append(nn.Linear(self.shape()[-1], output_size, dtype=self.LAYER_DTYPES))
+            layer = nn.Linear(self.shape()[-1], output_size, dtype=self.LAYER_DTYPES)
+            layer.weight.requires_grad = False
+            layer.bias.requires_grad = False
+            self.layers.append(layer)
             if 1 < len(self.shape()) < 4:
                 self.batch_norm(self.shape()[-2])
             if activation is not None:

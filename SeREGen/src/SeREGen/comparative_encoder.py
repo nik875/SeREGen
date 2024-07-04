@@ -21,6 +21,43 @@ from .encoders import ModelBuilder
 from .distance import Hyperbolic, Euclidean, Cosine
 
 
+def check_grad_nan(model):
+    for name, param in model.named_parameters():
+        if param.grad is not None:
+            if torch.isnan(param.grad).any():
+                print(f"NaN gradient detected in {name}")
+                return True
+    return False
+
+
+def check_grad_explosion(model, threshold=1000):
+    for name, param in model.named_parameters():
+        if param.grad is not None:
+            if torch.abs(param.grad).max() > threshold:
+                print(f"Exploding gradient detected in {name}: {torch.abs(param.grad).max()}")
+                return True
+    return False
+
+
+def check_grad_vanishing(model, threshold=1e-6):
+    for name, param in model.named_parameters():
+        if param.grad is not None:
+            if torch.abs(param.grad).max() < threshold:
+                print(f"Vanishing gradient detected in {name}: {torch.abs(param.grad).max()}")
+                return True
+    return False
+
+
+def check_gradients(model, explosion_threshold=1000, vanishing_threshold=1e-6):
+    has_nan = check_grad_nan(model)
+    is_exploding = check_grad_explosion(model, explosion_threshold)
+    is_vanishing = check_grad_vanishing(model, vanishing_threshold)
+
+    if has_nan or is_exploding:
+        return False
+    return True
+
+
 def _create_save_directory(path):
     os.makedirs(path, exist_ok=True)
 
@@ -43,7 +80,7 @@ class _NormalizedDistanceLayer(nn.Module):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.scaling_param = nn.Parameter(torch.ones(1))
+        self.scaling_param = nn.Parameter(torch.ones(1), requires_grad=True)
 
     def norm(self, dists):
         """
@@ -108,6 +145,8 @@ class ComparativeLayer(nn.Module):
         encodera = self.encoder(inputa)
         encoderb = self.encoder(inputb)
         distances = self.dist_layer(encodera, encoderb)
+        if torch.isnan(distances).any():
+            print("NaN detected in distance calculation")
 
         if self.reg_dims:
             return {'dist': distances, 'encoder': encodera}
@@ -177,7 +216,7 @@ class ModelTrainer:
         progress_bar = dataloader if self.silence else tqdm(
             dataloader, total=len(dataloader), desc="Training model...")
 
-        for batch in progress_bar:
+        for idx, batch in enumerate(progress_bar):
             batch_x1, batch_x2, batch_y = batch
             self.optimizer.zero_grad()
 
@@ -190,9 +229,19 @@ class ModelTrainer:
                 loss += self.losses['encoder'](outputs['encoder'])
 
             loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1-1e3)
+
+            if not check_gradients(self.model):
+                print("Gradient issues detected")
+
             self.optimizer.step()
             epoch_loss += loss.item()
-            running_loss = epoch_loss / (progress_bar.n + 1)
+            running_loss = epoch_loss / (idx + 1)
+
+            if math.isnan(loss.item()):  # TODO: FIX
+                print("Diverging to nan")
+                break
             if not self.silence:
                 progress_bar.set_description(f"Training model (loss: {running_loss:.4f})")
 
@@ -255,7 +304,7 @@ class ModelTrainer:
                 continue
 
             if this_loss < prev_best - min_delta:  # Early stopping
-                best_state_dict = self.model.get_state_dict()
+                best_state_dict = self.model.state_dict()
                 wait = 0
             else:
                 wait += 1
