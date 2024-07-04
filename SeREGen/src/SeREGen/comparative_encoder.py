@@ -399,10 +399,29 @@ class ComparativeModel(ModelTrainer):
         return None, None, None
 
     def random_set(self, x: np.ndarray, y: np.ndarray, epoch_factor=1) -> tuple[np.ndarray]:
-        p1 = np.concatenate([self.rng.permutation(x.shape[0])
-                            for _ in range(epoch_factor)])
-        p2 = np.concatenate([self.rng.permutation(x.shape[0])
-                            for _ in range(epoch_factor)])
+        total_samples = x.shape[0] * epoch_factor
+        p1 = np.empty(total_samples, dtype=int)
+        p2 = np.empty(total_samples, dtype=int)
+
+        idx = 0
+        while idx < total_samples:
+            batch_size = min(x.shape[0], total_samples - idx)
+
+            new_p1 = self.rng.permutation(x.shape[0])[:batch_size]
+            new_p2 = self.rng.permutation(x.shape[0])[:batch_size]
+
+            # Remove matching pairs
+            mask = new_p1 != new_p2
+            new_p1, new_p2 = new_p1[mask], new_p2[mask]
+
+            # Add to p1 and p2
+            end_idx = idx + new_p1.shape[0]
+            p1[idx:end_idx] = new_p1
+            p2[idx:end_idx] = new_p2
+            idx = end_idx
+
+        # Trim to exact size if we've overshot
+        p1, p2 = p1[:total_samples], p2[:total_samples]
         return x[p1], x[p2], y[p1], y[p2]
 
     def save(self, path):

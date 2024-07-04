@@ -333,10 +333,7 @@ class ModelBuilder:
         Additional keyword arguments are passed to TensorFlow Dense layer constructor.
         """
         for _ in range(depth):
-            layer = nn.Linear(self.shape()[-1], output_size, dtype=self.LAYER_DTYPES)
-            layer.weight.requires_grad = False
-            layer.bias.requires_grad = False
-            self.layers.append(layer)
+            self.layers.append(nn.Linear(self.shape()[-1], output_size, dtype=self.LAYER_DTYPES))
             if 1 < len(self.shape()) < 4:
                 self.batch_norm(self.shape()[-2])
             if activation is not None:
