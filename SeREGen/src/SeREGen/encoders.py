@@ -134,14 +134,17 @@ class SoftClipNorm(_CustomLayer):
 class L2Normalize(_CustomLayer):
     def __init__(self, dim=-1, eps=1e-8):
         super().__init__(dim=dim, eps=eps)
-        self.radius = nn.Parameter(torch.Tensor([1e-2]), requires_grad=True)
+        self.radius = nn.Parameter(torch.Tensor([1 - 1e-3]), requires_grad=True)
 
-    def forward(self, x):
+    def scale(self, x):
         min_scale = 1e-7
         max_scale = 1 - 1e3
-        normalized = nn.functional.normalize(x, p=2, dim=self.config['dim'], eps=self.config['eps'])
-        scaled = normalized * self.radius.clamp(min=min_scale, max=max_scale)
-        return scaled
+        soft_clamp = min_scale + (max_scale - min_scale) * torch.sigmoid(self.radius)
+        return x * soft_clamp
+
+    def forward(self, x):
+        normalized = nn.functional.normalize(x, p=2, dim=self.config['dim'])
+        return self.scale(normalized)
 
 
 class DynamicNormScaling(_CustomLayer):
