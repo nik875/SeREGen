@@ -230,7 +230,7 @@ class ModelTrainer:
 
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1-1e3)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1e3)
 
             if not check_gradients(self.model):
                 print("Gradient issues detected")
