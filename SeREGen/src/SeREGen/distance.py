@@ -1,6 +1,7 @@
 """
 Contains distance metrics used for training ComparativeEncoders.
 """
+
 import multiprocessing as mp
 import numpy as np
 from tqdm import tqdm
@@ -42,18 +43,26 @@ class Distance:
         """
         return data
 
-    def transform_multi(self, y1: np.ndarray, y2: np.ndarray, silence=False) -> np.ndarray:
+    def transform_multi(
+        self, y1: np.ndarray, y2: np.ndarray, silence=False
+    ) -> np.ndarray:
         """
         Transform two large arrays of data.
         """
         if self.jobs == 1 or len(y1) < self.chunksize:
-            it = zip(y1, y2) if self.silence or silence else tqdm(zip(y1, y2), total=len(y1))
+            it = (
+                zip(y1, y2)
+                if self.silence or silence
+                else tqdm(zip(y1, y2), total=len(y1))
+            )
             y = np.fromiter((self.transform(i) for i in it), dtype=np.float64)
         else:
             with mp.Pool(self.jobs) as p:
                 it = p.imap(self.transform, zip(y1, y2), chunksize=self.chunksize)
-                y = np.fromiter((it if self.silence or silence else tqdm(it, total=len(y1))),
-                                dtype=np.float64)
+                y = np.fromiter(
+                    (it if self.silence or silence else tqdm(it, total=len(y1))),
+                    dtype=np.float64,
+                )
         y = self.postprocessor(y)  # Vectorized transformations are applied here
         return y
 
@@ -101,8 +110,9 @@ class Cosine(VectorizedDistance):
 
     def transform(self, pair: tuple) -> int:
         # Subtracting from 1 to convert similarity to distance
-        return np.sum(pair[0] * pair[1], axis=-1) / (np.linalg.norm(pair[0], axis=-1) *
-                                                     np.linalg.norm(pair[1], axis=-1))
+        return np.sum(pair[0] * pair[1], axis=-1) / (
+            np.linalg.norm(pair[0], axis=-1) * np.linalg.norm(pair[1], axis=-1)
+        )
 
     def postprocessor(self, data):
         return 1 - super().postprocessor(data)
@@ -122,7 +132,9 @@ class Hyperbolic(VectorizedDistance):
         a = a.astype(np.float64)  # Both arrays must be the same type
         b = b.astype(np.float64)
         eps = np.finfo(np.float64).eps  # Machine epsilon
-        def sq_norm(v): return np.clip(np.sum(v ** 2, axis=-1), eps, 1 - eps)
+
+        def sq_norm(v):
+            return np.clip(np.sum(v**2, axis=-1), eps, 1 - eps)
 
         numerator = np.sum((a - b) ** 2, axis=-1)
         denominator_a = 1 - sq_norm(a)
@@ -148,7 +160,9 @@ class IncrementalDistance(VectorizedDistance):
 
     def transform(self, pair: tuple) -> int:
         pair = [i if isinstance(i, np.ndarray) else np.array([i]) for i in pair]
-        kmer_pair = [self.counter.kmer_counts(i, jobs=1, chunksize=1, silence=True) for i in pair]
+        kmer_pair = [
+            self.counter.kmer_counts(i, jobs=1, chunksize=1, silence=True) for i in pair
+        ]
         return self.distance.transform(tuple(kmer_pair))
 
 
