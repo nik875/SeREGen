@@ -47,25 +47,17 @@ def check_grad_vanishing(model, threshold, suppress=False):
         if param.grad is not None:
             if torch.abs(param.grad).max() < threshold:
                 if not suppress:
-                    print(
-                        f"Vanishing gradient detected in {name}: {torch.abs(param.grad).max()}"
-                    )
+                    print(f"Vanishing gradient detected in {name}: {torch.abs(param.grad).max()}")
                 return True
     return False
 
 
-def check_gradients(
-    model, explosion_threshold=1e4, vanishing_threshold=1e-7, suppress=None
-):
+def check_gradients(model, explosion_threshold=1e4, vanishing_threshold=1e-7, suppress=None):
     suppress = suppress or []
     return {
         "nan": check_grad_nan(model, "nan" in suppress),
-        "exploding": check_grad_explosion(
-            model, explosion_threshold, "exploding" in suppress
-        ),
-        "vanishing": check_grad_vanishing(
-            model, vanishing_threshold, "vanishing" in suppress
-        ),
+        "exploding": check_grad_explosion(model, explosion_threshold, "exploding" in suppress),
+        "vanishing": check_grad_vanishing(model, vanishing_threshold, "vanishing" in suppress),
     }
 
 
@@ -91,9 +83,7 @@ class _NormalizedDistanceLayer(nn.Module):
 
     def __init__(self, trainable_scaling=True, **kwargs):
         super().__init__(**kwargs)
-        self.scaling_param = nn.Parameter(
-            torch.ones(1), requires_grad=trainable_scaling
-        )
+        self.scaling_param = nn.Parameter(torch.ones(1), requires_grad=trainable_scaling)
 
     def norm(self, dists):
         """
@@ -238,8 +228,7 @@ class ModelTrainer:
 
         # Create dataloader
         return torch.utils.data.DataLoader(
-            dataset, batch_size=self.properties["batch_size"], shuffle=shuffle
-        )
+            dataset, batch_size=self.properties["batch_size"], shuffle=shuffle)
 
     def train_step(self, x, y, suppress_grad_warn=None, clip_grad=True) -> dict:
         """
@@ -250,20 +239,14 @@ class ModelTrainer:
         dataloader = self.prepare_torch_dataset(x, y)
         epoch_loss = 0.0
         n = 0
-        self.model = self.model.to(self.properties["dtype"]).to(
-            self.properties["device"]
-        )
+        self.model = self.model.to(self.properties["dtype"]).to(self.properties["device"])
         self.model.train()
         if not self.properties["silence"]:
-            dataloader = tqdm(
-                dataloader, total=len(dataloader), desc="Training model..."
-            )
+            dataloader = tqdm(dataloader, total=len(dataloader), desc="Training model...")
 
         for batch in dataloader:
             b_x1, b_x2, b_y = map(
-                lambda i: i.to(self.properties["dtype"]).to(self.properties["device"]),
-                batch,
-            )
+                lambda i: i.to(self.properties["dtype"]).to(self.properties["device"]), batch)
             self.optimizer.zero_grad()
 
             # Forward pass
@@ -344,9 +327,7 @@ class ModelTrainer:
             success = self.first_epoch(*args, lr=first_ep_lr, **kwargs)
             if not success:
                 self._print(
-                    "Stopping due to numerical instability, loss converges (0) or "
-                    + "diverges (Nan)"
-                )
+                    "Stopping due to numerical instability, loss converges (0) or diverges (Nan)")
                 return {"loss": [math.nan]}
         if "loss" not in self.history or not isinstance(self.history["loss"], list):
             self.history["loss"] = []
@@ -363,18 +344,14 @@ class ModelTrainer:
             self.history["loss"].append(this_history["loss"])
 
             this_loss = self.history["loss"][-1]
-            prev_best = (
-                min(self.history["loss"][:-1])
-                if len(self.history["loss"]) > 1
-                else this_loss
-            )  # Make sure prev_best is the same as this_loss at beginning
+            # Make sure prev_best is the same as this_loss at beginning
+            prev_best = min(self.history["loss"][:-1]) \
+                if len(self.history["loss"]) > 1 else this_loss
 
             # Divergence detection
             if math.isnan(this_loss) or this_loss == 0:
                 self._print(
-                    "Stopping due to numerical instability, loss converges (0) or "
-                    + "diverges (Nan)"
-                )
+                    "Stopping due to numerical instability, loss converges (0) or diverges (Nan)")
                 self.model.load_state_dict(best_state_dict)
                 break
 
@@ -410,9 +387,7 @@ class ModelTrainer:
         results = []
         with torch.no_grad():
             for batch in dataset:
-                results.append(
-                    self.model(*[i.to(self.properties["device"]) for i in batch])
-                )
+                results.append(self.model(*[i.to(self.properties["device"]) for i in batch]))
         return torch.cat(results, dim=0).detach().cpu().numpy()
 
     def summary(self):
@@ -479,12 +454,8 @@ class ComparativeEncoder(ModelTrainer):
         self.embed_dist = embed_dist
         if "embed_dist" not in self.properties:
             self.properties["embed_dist"] = embed_dist
-        super().__init__(
-            *self.create_model(**kwargs),
-            properties=self.properties,
-            dtype=dtype,
-            **kwargs,
-        )
+        super().__init__(*self.create_model(**kwargs), properties=self.properties, dtype=dtype,
+                         **kwargs)
         self.encoder = self.encoder.to(self.properties["device"])
 
     def create_model(self, loss="corr_coef", lr=0.001, **_):
@@ -522,8 +493,7 @@ class ComparativeEncoder(ModelTrainer):
         distribute strategy and variable scope. Also automatically adds a clip_norm for hyperbolic.
         """
         encoder, properties = builder.compile(
-            repr_size=repr_size, norm_type=norm_type, embed_space=embed_dist
-        )
+            repr_size=repr_size, norm_type=norm_type, embed_space=embed_dist)
         return cls(encoder, properties=properties, embed_dist=embed_dist, **kwargs)
 
     @staticmethod
@@ -549,9 +519,7 @@ class ComparativeEncoder(ModelTrainer):
         r2 = r**2 * (r / (torch.abs(r) + 1e-8))
         return 1 - r2
 
-    def random_set(
-        self, x: np.ndarray, y: np.ndarray, epoch_factor=1
-    ) -> tuple[np.ndarray]:
+    def random_set(self, x: np.ndarray, y: np.ndarray, epoch_factor=1) -> tuple[np.ndarray]:
         total_samples = x.shape[0] * epoch_factor
         p1 = np.empty(total_samples, dtype=int)
         p2 = np.empty(total_samples, dtype=int)
@@ -577,13 +545,7 @@ class ComparativeEncoder(ModelTrainer):
         p1, p2 = p1[:total_samples], p2[:total_samples]
         return x[p1], x[p2], y[p1], y[p2]
 
-    def train_step(
-        self,
-        data: np.ndarray,
-        distance_on: np.ndarray,
-        epoch_factor=1,
-        **kwargs,
-    ):
+    def train_step(self, data: np.ndarray, distance_on: np.ndarray, epoch_factor=1, **kwargs):
         # pylint: disable=arguments-differ
         """
         Train a single randomized epoch on data and distance_on.
@@ -639,9 +601,7 @@ class ComparativeEncoder(ModelTrainer):
         model.encoder = model.model
         # pylint: disable=no-member
         model.model, model.losses, model.optimizer = model.create_model(
-            loss=model.properties["loss"],
-            lr=model.properties["lr"],
-        )
+            loss=model.properties["loss"], lr=model.properties["lr"])
         model.distance = _load_object(os.path.join(path, "distance.pkl"))
         model.embed_dist = _load_object(os.path.join(path, "embed_dist.pkl"))
         return model
@@ -669,8 +629,7 @@ class ComparativeEncoder(ModelTrainer):
         """
         sample_size = sample_size or len(data)
         x, y = self.random_distance_set(
-            data, distance_on, epoch_factor=sample_size // len(data) + 1
-        )
+            data, distance_on, epoch_factor=sample_size // len(data) + 1)
 
         r2 = pearsonr(x, y).statistic ** 2
         mse = np.mean((x - y) ** 2)

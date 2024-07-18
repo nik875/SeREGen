@@ -43,26 +43,19 @@ class Distance:
         """
         return data
 
-    def transform_multi(
-        self, y1: np.ndarray, y2: np.ndarray, silence=False
-    ) -> np.ndarray:
+    def transform_multi(self, y1: np.ndarray, y2: np.ndarray, silence=False) -> np.ndarray:
         """
         Transform two large arrays of data.
         """
         if self.jobs == 1 or len(y1) < self.chunksize:
-            it = (
-                zip(y1, y2)
-                if self.silence or silence
-                else tqdm(zip(y1, y2), total=len(y1))
-            )
+            it = (zip(y1, y2) if self.silence or silence else tqdm(zip(y1, y2), total=len(y1)))
             y = np.fromiter((self.transform(i) for i in it), dtype=np.float64)
         else:
             with mp.Pool(self.jobs) as p:
                 it = p.imap(self.transform, zip(y1, y2), chunksize=self.chunksize)
                 y = np.fromiter(
-                    (it if self.silence or silence else tqdm(it, total=len(y1))),
-                    dtype=np.float64,
-                )
+                    (it if self.silence or silence else tqdm(
+                        it, total=len(y1))), dtype=np.float64,)
         y = self.postprocessor(y)  # Vectorized transformations are applied here
         return y
 
@@ -111,8 +104,7 @@ class Cosine(VectorizedDistance):
     def transform(self, pair: tuple) -> int:
         # Subtracting from 1 to convert similarity to distance
         return np.sum(pair[0] * pair[1], axis=-1) / (
-            np.linalg.norm(pair[0], axis=-1) * np.linalg.norm(pair[1], axis=-1)
-        )
+            np.linalg.norm(pair[0], axis=-1) * np.linalg.norm(pair[1], axis=-1))
 
     def postprocessor(self, data):
         return 1 - super().postprocessor(data)
@@ -160,9 +152,7 @@ class IncrementalDistance(VectorizedDistance):
 
     def transform(self, pair: tuple) -> int:
         pair = [i if isinstance(i, np.ndarray) else np.array([i]) for i in pair]
-        kmer_pair = [
-            self.counter.kmer_counts(i, jobs=1, chunksize=1, silence=True) for i in pair
-        ]
+        kmer_pair = [self.counter.kmer_counts(i, jobs=1, chunksize=1, silence=True) for i in pair]
         return self.distance.transform(tuple(kmer_pair))
 
 
