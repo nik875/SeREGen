@@ -184,7 +184,7 @@ class ModelTrainer:
         self.properties["dtype"] = dtype
         self.properties["device"] = device or self.get_device()
         self.properties["seed"] = random_seed
-        self.model = model.to(self.properties["device"]).to(dtype)
+        self.model = model.to(self.properties["dtype"]).to(self.properties["device"])
         self.history = history or {}
         self.rng = np.random.default_rng(seed=random_seed)
         self.losses = losses
@@ -247,10 +247,12 @@ class ModelTrainer:
         """
         suppress_grad_warn = suppress_grad_warn or []
         suppress_grad_warn = [i.lower() for i in suppress_grad_warn]
-        dataloader = self.prepare_torch_dataset(x, y, self.properties["batch_size"])
+        dataloader = self.prepare_torch_dataset(x, y)
         epoch_loss = 0.0
         n = 0
-        self.model = self.model.to(self.properties["device"])
+        self.model = self.model.to(self.properties["dtype"]).to(
+            self.properties["device"]
+        )
         self.model.train()
         if not self.properties["silence"]:
             dataloader = tqdm(
@@ -258,16 +260,17 @@ class ModelTrainer:
             )
 
         for batch in dataloader:
-            batch_x1, batch_x2, batch_y = [
-                i.to(self.properties["device"]) for i in batch
-            ]
+            b_x1, b_x2, b_y = map(
+                lambda i: i.to(self.properties["dtype"]).to(self.properties["device"]),
+                batch,
+            )
             self.optimizer.zero_grad()
 
             # Forward pass
-            outputs = self.model(batch_x1, batch_x2)
+            outputs = self.model(b_x1, b_x2)
 
             # Compute loss
-            loss = self.losses["dist"](outputs, batch_y)
+            loss = self.losses["dist"](outputs, b_y)
 
             if math.isnan(loss.item()):
                 if "nan" in suppress_grad_warn:
@@ -287,8 +290,8 @@ class ModelTrainer:
                 return {"loss": math.nan}
 
             self.optimizer.step()
-            epoch_loss += loss.item()
-            n += batch_x1.shape[0]
+            epoch_loss += loss.item() * b_x1.shape[0]
+            n += b_x1.shape[0]
             running_loss = epoch_loss / n
             if not self.properties["silence"]:
                 dataloader.set_description(f"Training model (loss: {running_loss:.4e})")
@@ -414,8 +417,8 @@ class ModelTrainer:
 
     def summary(self):
         return summary(
-            self.model,
-            input_size=(1, *self.properties["input_shape"]),
+            self.model.to(self.properties["dtype"]),
+            input_shape=(1, *self.properties["input_shape"]),
             dtypes=[self.properties["dtype"]],
         )
 
@@ -615,16 +618,6 @@ class ComparativeEncoder(ModelTrainer):
         self.model = model
         return result
 
-    def summary(self):
-        """
-        Prints a summary of the encoder.
-        """
-        model = self.model
-        self.model = self.encoder
-        result = super().summary()
-        self.model = model
-        return result
-
     def comparative_model_summary(self):
         """
         Prints a summary of the comparative encoder.
@@ -679,7 +672,7 @@ class ComparativeEncoder(ModelTrainer):
             data, distance_on, epoch_factor=sample_size // len(data) + 1
         )
 
-        r2 = pearsonr(x, y).statistic
+        r2 = pearsonr(x, y).statistic ** 2
         mse = np.mean((x - y) ** 2)
         self._print(f"Mean squared error of distances: {mse}")
         self._print(f"R-squared correlation coefficient: {r2}")

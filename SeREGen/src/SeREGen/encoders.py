@@ -3,6 +3,7 @@ Module to help build encoders for ComparativeEncoder. It is recommended to use M
 """
 
 import os
+import functools
 
 
 import torch
@@ -10,9 +11,6 @@ from torch import nn
 from torchtext.data.utils import get_tokenizer
 from torchtext.vocab import build_vocab_from_iterator
 from torchinfo import summary
-
-
-DEFAULT_DTYPE = torch.float64
 
 
 class IncompatibleDimensionsException(Exception):
@@ -30,55 +28,70 @@ class LayerCommon(nn.Module):
     Handles saving and loading of layers.
     """
 
-    def __init__(self, norm_type=None, norm_to=1, **config):
+    def __init__(
+        self,
+        norm_type=None,
+        norm_to=1,
+        float_type=torch.float64,
+        residual=False,
+        **config,
+    ):
         super().__init__()
         self.config = config
         self.config["norm_type"] = norm_type
         self.config["norm_to"] = norm_to
+        self.config["float_type"] = float_type
+        self.config["residual"] = residual
 
         if norm_type == "clip":
             self.norm_fn = self.clip_norm
         elif norm_type == "soft_clip":
             self.norm_fn = self.soft_clip_norm
+            self.scaling = nn.Parameter(torch.Tensor([1 - 1e-2]), requires_grad=True)
+            self.radius = nn.Parameter(torch.Tensor([1 - 1e-2]), requires_grad=True)
         elif norm_type == "scale_down":
             self.norm_fn = self.dynamic_norm_scaling
         elif norm_type == "l2":
             self.norm_fn = self.l2_norm
             self.radius = nn.Parameter(torch.Tensor([1e-2]), requires_grad=False)
         else:
-            self.norm_fn = nn.Identity()  # Do nothing
+            self.norm_fn = lambda x: x  # Do nothing
+
+        if self.config["residual"]:
+            self.forward = self.forward_with_residual(self.forward)
 
     def clip_norm(self, x):
         return torch.clamp(x, min=-self.config["norm_to"], max=self.config["norm_to"])
 
     def soft_clip_norm(self, x):
-        # norm = torch.norm(x, dim=-1, keepdim=True).clamp_min(1e-5)
-        norm = nn.functional.normalize(x, p=2, dim=-1, eps=1e-7).clamp_min(1e-5)
-        scaled_norm = self.config["norm_to"] * norm
-        soft_clip_factor = torch.tanh(scaled_norm) / scaled_norm
-        return x * soft_clip_factor
+        norm = torch.norm(x, dim=-1, keepdim=True).clamp_min(1e-7)
+        return (
+            x
+            / norm
+            * torch.tanh(norm * self.scaling)
+            * self.radius.clamp(min=1e-7, max=1 - 1e-7)
+        )
+
+    #        scaled_norm = self.radius.clamp(min=1e-7, max=1 - 1e-7) * norm
+    #        soft_clip_factor = torch.tanh(scaled_norm) / scaled_norm
+    #        return x * soft_clip_factor
 
     def l2_norm(self, x):
         normalized = nn.functional.normalize(x, p=2, dim=-1, eps=1e-7)
-        # normalized = x / x.norm(p=2, dim=-1, keepdim=True).clamp_min(1e-7)
-        soft_clamp = (1 - self.config["norm_to"]) * torch.sigmoid(self.radius)
-        #        clamp = self.radius.clamp(
-        #            min=self.config["norm_to"], max=1 - self.config["norm_to"]
-        #        )
-        #        print(
-        #            x.max(),
-        #            x.min(),
-        #            normalized.max(),
-        #            normalized.min(),
-        #            soft_clamp.max(),
-        #            soft_clamp.min(),
-        #        )
+        soft_clamp = self.config["norm_to"] * torch.sigmoid(self.radius)
         return normalized * soft_clamp + 1e-7
 
     def dynamic_norm_scaling(self, x):
         return x / torch.norm(x, dim=-1).max()
 
-    def forward(self, inputs):
+    def forward_with_residual(self, forward_fn):
+        @functools.wraps(forward_fn)
+        def wrapper(inputs):
+            return forward_fn(inputs) + inputs
+
+        return wrapper
+
+    def forward(self, inputs):  # pylint: disable=method-hidden
         return self.norm_fn(inputs)
 
     def __repr__(self):
@@ -96,7 +109,9 @@ class Linear(LayerCommon):
         )
 
         layers = nn.ModuleList()
-        layers.append(nn.Linear(input_size, output_size, dtype=DEFAULT_DTYPE))
+        layers.append(
+            nn.Linear(input_size, output_size, dtype=self.config["float_type"])
+        )
         if activation == "relu":
             layers.append(nn.ReLU())
         self.linear = nn.Sequential(*layers)
@@ -104,6 +119,55 @@ class Linear(LayerCommon):
     def forward(self, inputs):
         linear_out = self.linear(inputs)
         return super().forward(linear_out)
+
+
+class Conv1D(LayerCommon):
+    def __init__(self, input_size, filters, kernel_size, **kwargs):
+        super().__init__(
+            input_size=input_size,
+            filters=filters,
+            kernel_size=kernel_size,
+            **kwargs,
+        )
+        self.conv_unit = nn.Sequential(
+            nn.Conv1d(
+                input_size,
+                filters,
+                kernel_size,
+                padding="same",
+                dtype=self.config["float_type"],
+            ),
+            nn.ReLU(),
+            nn.BatchNorm1d(filters, dtype=self.config["float_type"]),
+            nn.Conv1d(
+                filters, input_size, kernel_size=1, dtype=self.config["float_type"]
+            ),
+        )
+
+    #        layers = nn.ModuleList()
+    #        layers.append(
+    #            nn.Conv1d(input_size, filters, kernel_size, dtype=self.config["float_type"])
+    #        )
+    #        layers.append(nn.ReLU())
+    #        layers.append(nn.MaxPool1d(2))
+    #        layers.append(nn.BatchNorm1d(filters, dtype=self.config["float_type"]))
+    #
+    #        # Use Adaptive Average Pooling to get the desired output size
+    #        layers.append(nn.AdaptiveAvgPool1d(output_size))
+    #
+    #        # Final pointwise convolution to adjust the number of channels
+    #        layers.append(
+    #            nn.Conv1d(
+    #                in_channels=filters,
+    #                out_channels=output_size,
+    #                kernel_size=1,
+    #                dtype=self.config["float_type"],
+    #            )
+    #        )
+    #        self.conv_unit = nn.Sequential(*layers)
+
+    def forward(self, inputs):
+        return self.conv_unit(inputs)
 
 
 class AttentionBlock(LayerCommon):
@@ -116,11 +180,13 @@ class AttentionBlock(LayerCommon):
         super().__init__(
             embed_dim=embed_dim, num_heads=num_heads, ff_dim=ff_dim, **kwargs
         )
-        self.att = nn.MultiheadAttention(embed_dim, num_heads, dtype=DEFAULT_DTYPE)
+        self.att = nn.MultiheadAttention(
+            embed_dim, num_heads, dtype=self.config["float_type"]
+        )
         self.ffn = nn.Sequential(
-            nn.Linear(embed_dim, ff_dim, dtype=DEFAULT_DTYPE),
+            nn.Linear(embed_dim, ff_dim, dtype=self.config["float_type"]),
             nn.ReLU(),
-            nn.Linear(ff_dim, embed_dim, dtype=DEFAULT_DTYPE),
+            nn.Linear(ff_dim, embed_dim, dtype=self.config["float_type"]),
         )
         self.layernorm1 = nn.LayerNorm(embed_dim)
         self.layernorm2 = nn.LayerNorm(embed_dim)
@@ -140,14 +206,14 @@ class OneHotEncoding(LayerCommon):
     One hot encoding as a layer. Casts input to integers.
     """
 
-    def __init__(self, depth: int):
-        super().__init__(depth=depth)
+    def __init__(self, depth: int, **kwargs):
+        super().__init__(depth=depth, **kwargs)
 
     def forward(self, inputs):
         encoded = nn.functional.one_hot(
             inputs.to(torch.int64), num_classes=self.config["depth"]
         )
-        return encoded.to(DEFAULT_DTYPE)
+        return encoded.to(self.config["float_type"])
 
 
 class TextVectorizer(LayerCommon):
@@ -155,12 +221,15 @@ class TextVectorizer(LayerCommon):
     Convert input text into ordinally encoded tokens, then vector embeddings.
     """
 
-    def __init__(self, vocab: list[str], embed_dim: int, max_len: int, embeddings=True):
+    def __init__(
+        self, vocab: list[str], embed_dim: int, max_len: int, embeddings=True, **kwargs
+    ):
         super().__init__(
             vocab=str(vocab),
             embed_dim=embed_dim,
             max_len=max_len,
             embeddings=embeddings,
+            **kwargs,
         )
         self.tokenizer = get_tokenizer(list)
         self.vocab = build_vocab_from_iterator(vocab, specials=["<unk>", "<pad>"])
@@ -170,7 +239,7 @@ class TextVectorizer(LayerCommon):
                 len(self.vocab),
                 embed_dim,
                 padding_idx=self.vocab["<pad>"],
-                dtype=DEFAULT_DTYPE,
+                dtype=self.config["float_type"],
             )
             if embeddings
             else None
@@ -197,7 +266,7 @@ class TextVectorizer(LayerCommon):
 
         if self.embedding is not None:
             padded = self.embedding(padded)
-        return padded.to(DEFAULT_DTYPE)
+        return padded.to(self.config["float_type"])
 
 
 class Transpose(LayerCommon):
@@ -205,8 +274,8 @@ class Transpose(LayerCommon):
     Transpose the input over given axes.
     """
 
-    def __init__(self, dim0: int, dim1: int):
-        super().__init__(dim0=dim0, dim1=dim1)
+    def __init__(self, dim0: int, dim1: int, **kwargs):
+        super().__init__(dim0=dim0, dim1=dim1, **kwargs)
 
     def forward(self, inputs):
         return inputs.transpose(self.config["dim0"] + 1, self.config["dim1"] + 1)
@@ -217,7 +286,13 @@ class ModelBuilder:
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
 
-    def __init__(self, input_shape: tuple, input_dtype=None, is_text_input=False):
+    def __init__(
+        self,
+        input_shape: tuple,
+        input_dtype=torch.float64,
+        float_type=torch.float64,
+        is_text_input=False,
+    ):
         """
         Create a new ModelBuilder object.
         @param input_shape: Shape of model input.
@@ -225,9 +300,11 @@ class ModelBuilder:
         on a single GPU.
         """
         self.input_shape = input_shape
-        self.input_dtype = input_dtype or DEFAULT_DTYPE
+        self.input_dtype = input_dtype
+        self.float_ = float_type
         self.is_text_input = is_text_input
         self.layers = nn.ModuleList()
+        self.residual_size = 0
 
     @classmethod
     def text_input(
@@ -261,7 +338,7 @@ class ModelBuilder:
         casted to int32.
         @param depth: number of categories to encode.
         """
-        self.layers.append(OneHotEncoding(depth, **kwargs))
+        self.layers.append(OneHotEncoding(depth, float_type=self.float_, **kwargs))
 
     def embedding(self, input_dim: int, output_dim: int, padding_idx=None, **kwargs):
         """
@@ -272,7 +349,13 @@ class ModelBuilder:
         @param padding_idx: Index of padding token. Defaults to None.
         """
         self.layers.append(
-            nn.Embedding(input_dim, output_dim, padding_idx=padding_idx, **kwargs)
+            nn.Embedding(
+                input_dim,
+                output_dim,
+                padding_idx=padding_idx,
+                dtype=self.float_,
+                **kwargs,
+            )
         )
 
     def summary(self, **kwargs):
@@ -308,19 +391,19 @@ class ModelBuilder:
         """
         if repr_size:  # Skip this step by setting repr_size to 0
             # Avoid putting points on the very edge of the poincare ball
-            norm_to = 1e-5 if embed_space == "hyperbolic" else 1
+            norm_to = 1 - 1e-5 if embed_space == "hyperbolic" else 1
             self.flatten()
-            self.dense(repr_size, activation=None)
-            #            self.layers.append(
-            #                Linear(
-            #                    self.shape()[-1],
-            #                    repr_size,
-            #                    activation=None,
-            #                    # norm_type=norm_type,
-            #                    # norm_to=norm_to,
-            #                )
-            #            )
-            self.layers.append(LayerCommon(norm_type=norm_type, norm_to=norm_to))
+            # self.dense(repr_size, activation=None)
+            self.layers.append(
+                Linear(
+                    self.shape()[-1],
+                    repr_size,
+                    activation=None,
+                    norm_type=norm_type,
+                    norm_to=norm_to,
+                )
+            )
+            # self.layers.append(LayerCommon(norm_type=norm_type, norm_to=norm_to))
         if embed_space == "hyperbolic" and norm_type not in [
             "clip",
             "soft_clip",
@@ -349,7 +432,7 @@ class ModelBuilder:
 
     def custom_layer(self, layer: nn.Module):
         """
-        Add a custom layer to the model.
+        Add a layer to the model.
         @param layer: TensorFlow layer to add.
         """
         self.layers.append(layer)
@@ -368,7 +451,7 @@ class ModelBuilder:
         @param a: First axis to transpose, defaults to 0.
         @param b: Second axis to transpose, defaults to 1.
         """
-        self.layers.append(Transpose(a, b))
+        self.layers.append(Transpose(a, b, float_type=self.float_))
 
     def flatten(self):
         """
@@ -388,13 +471,13 @@ class ModelBuilder:
         Add a batch normalization to the model.
         """
         if len(self.shape()) == 3:
-            self.layers.append(nn.BatchNorm2d(output_size, dtype=DEFAULT_DTYPE))
+            self.layers.append(nn.BatchNorm2d(output_size, dtype=self.float_))
         elif len(self.shape()) == 2:
-            self.layers.append(nn.BatchNorm1d(output_size, dtype=DEFAULT_DTYPE))
+            self.layers.append(nn.BatchNorm1d(output_size, dtype=self.float_))
         else:
             raise IncompatibleDimensionsException("Model dims not either 1 or 2")
 
-    def dense(self, output_size: int, depth=1, activation="relu"):
+    def dense(self, output_size: int, depth=1, activation="relu", residual=False):
         """
         Procedurally add dense layers to the model. Input size is inferred.
         @param size: number of nodes per layer.
@@ -403,18 +486,24 @@ class ModelBuilder:
         Additional keyword arguments are passed to TensorFlow Dense layer constructor.
         """
         for _ in range(depth):
-            # self.layers.append(
-            #    Linear(self.shape()[-1], output_size, activation=activation)
-            # )
             self.layers.append(
-                nn.Linear(self.shape()[-1], output_size, dtype=DEFAULT_DTYPE)
+                Linear(
+                    self.shape()[-1],
+                    output_size,
+                    activation=activation,
+                    residual=residual,
+                    float_type=self.float_,
+                )
             )
-            if activation == "relu":
-                self.layers.append(nn.ReLU())
+            # self.layers.append(
+            #    nn.Linear(self.shape()[-1], output_size, dtype=self.float_)
+            # )
+            # if activation == "relu":
+            #    self.layers.append(nn.ReLU())
             if 1 < len(self.shape()) < 4:
                 self.batch_norm(self.shape()[-2])
 
-    def conv1D(self, filters: int, kernel_size: int, output_size: int):
+    def conv1D(self, filters: int, kernel_size: int, residual=False):
         """
         Add a convolutional layer.
         Output passes through feed forward layer with size specified by output_dim.
@@ -426,29 +515,33 @@ class ModelBuilder:
         Additional keyword arguments are passed to TensorFlow Conv1D layer constructor.
         """
         shape = self.shape()
+        #        conv_output_size = (shape[1] - kernel_size + 1) // 2
         if len(shape) != 2:
             raise IncompatibleDimensionsException()
         if kernel_size >= shape[1]:
             raise IncompatibleDimensionsException()
 
         self.layers.append(
-            nn.Conv1d(shape[0], filters, kernel_size, dtype=DEFAULT_DTYPE)
-        )
-        self.layers.append(nn.ReLU())
-        self.layers.append(nn.MaxPool1d(2))
-        #        conv_output_size = (shape[1] - kernel_size + 1) // 2
-        self.batch_norm(filters)
-        self.layers.append(
-            nn.Conv1d(
-                in_channels=filters,
-                out_channels=output_size,
-                kernel_size=1,
-                dtype=DEFAULT_DTYPE,
+            Conv1D(
+                shape[0],
+                filters,
+                kernel_size,
+                float_type=self.float_,
+                residual=residual,
             )
         )
-        self.layers.append(nn.ReLU())
 
-    def attention(self, num_heads: int, output_size: int):
+    #        self.layers.append(
+    #            nn.Conv1d(
+    #                in_channels=filters,
+    #                out_channels=output_size,
+    #                kernel_size=1,
+    #                dtype=self.float_,
+    #            )
+    #        )
+    #        self.layers.append(nn.ReLU())
+
+    def attention(self, num_heads: int, output_size: int, residual=False):
         """
         Add an attention layer. Embeddings must be generated beforehand.
         @param num_heads: Number of attention heads.
@@ -457,7 +550,9 @@ class ModelBuilder:
         """
         if len(self.shape()) != 2:
             raise IncompatibleDimensionsException(prev_shape=self.shape())
-        self.layers.append(AttentionBlock(self.shape()[1], num_heads, output_size))
+        self.layers.append(
+            AttentionBlock(self.shape()[1], num_heads, output_size, residual=residual)
+        )
 
     def save_model(self, path: str):
         """
