@@ -200,7 +200,7 @@ class Dataset(pd.DataFrame):
         """
         if counter is None and K == -1:
             raise ValueError('Either K must be specified or a KMerCounter object must be passed!')
-        counter = counter or KMerCounter(K, jobs=jobs, chunksize=chunksize, quiet=not progress)
+        counter = counter or KMerCounter(K, jobs=jobs, chunksize=chunksize, silence=not progress)
         kmers = counter.kmer_sequences(self['seqs'].to_numpy())
         # Ensures no kmer values conflict with special tokens.
         kmers = [i + int(avoid_pad) + int(avoid_oov) for i in kmers]
@@ -232,7 +232,7 @@ class Dataset(pd.DataFrame):
         """
         if counter is None and K == -1:
             raise ValueError('Either K must be specified or a KMerCounter object must be passed!')
-        counter = counter or KMerCounter(K, jobs=jobs, chunksize=chunksize, quiet=not progress)
+        counter = counter or KMerCounter(K, jobs=jobs, chunksize=chunksize, silence=not progress)
         return counter.kmer_counts(self['seqs'].to_numpy())
 
 
