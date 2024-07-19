@@ -2,7 +2,7 @@
 Automated pipelines for sequence representation generation.
 """
 import os
-import pickle
+import re
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import scipy.stats as st
 from sklearn.neighbors import BallTree
 import torch
+from tqdm import tqdm
 
 from .dataset_builder import DatasetBuilder, SILVA_header_parser, COVID_header_parser
 from .visualize import repr_scatterplot
@@ -18,7 +19,7 @@ from .kmer_compression import KMerCountPCA, KMerCountIPCA, KMerCountCompressor
 from .encoders import ModelBuilder
 from .comparative_encoder import ComparativeEncoder
 from .distance import IncrementalDistance, EditDistance, Cosine, Euclidean
-from ._saving import _create_save_directory, _save_object, _save_torch, _load_object, _load_torch
+from ._saving import _create_save_directory, _save_object, _load_object
 
 # pylint: disable=arguments-differ
 
@@ -37,7 +38,8 @@ class Pipeline:
         self.index = None
         self.random_seed = random_seed
         self.rng = np.random.default_rng(seed=random_seed)
-        torch.manual_seed(random_seed)  # Set global random seed
+        if random_seed:
+            torch.manual_seed(random_seed)  # Set global random seed
 
     def load_dataset(self, paths: list[str], header_parser='None', trim_to=0, max_rows=None):
         """
@@ -57,8 +59,7 @@ class Pipeline:
             self.dataset.trim_seqs(trim_to)
 
     # Subclass must override.
-    @staticmethod
-    def preprocess_seqs(seqs) -> np.ndarray:
+    def preprocess_seqs(self, seqs) -> np.ndarray:
         """
         Preprocesses a list of sequences.
         @param seqs: Sequences to preprocess.
@@ -255,7 +256,8 @@ class KMerCountsPipeline(Pipeline):
         print('Fitting compressor...')
         self.compressor.fit(sample)
 
-    def create_model(self, depth=3, dist='cosine', dist_args=None, **kwargs):
+    def create_model(self, depth=3, dist='cosine', dist_args=None,
+                     float_type=torch.float64, **kwargs):
         """
         Create a Model for this KMerCountsPipeline. Uses all available GPUs.
         """
@@ -268,7 +270,7 @@ class KMerCountsPipeline(Pipeline):
         dist = self.DISTS[dist](silence=self.silence, **(dist_args or {}))
 
         compress_to = self.compressor.compress_to if self.compressor else 4 ** self.K_
-        builder = ModelBuilder((compress_to,))
+        builder = ModelBuilder((compress_to,), input_dtype=float_type)
         builder.dense(compress_to, depth=depth)
         self.model = ComparativeEncoder.from_model_builder(builder, dist=dist,
                                                            silence=self.silence,
@@ -348,7 +350,32 @@ class SequencePipeline(Pipeline):
     """
     Abstract sequence alignment estimator. Define VOCAB in subclass.
     """
-    VOCAB = []  # MUST be defined by subclass
+    VOCAB = []  # MUST be defined by subclass; chr(0) is reserved
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        alphabet = np.array(self.VOCAB)
+        self.alphabet_pattern = re.compile(f'[^{"".join(alphabet)}]')
+
+        # Make a lookup table with an entry for every possible data byte
+        self.lookup_table = np.zeros(256, dtype=np.uint32)
+        for idx, val in enumerate(self.VOCAB):
+            self.lookup_table[ord(val)] = idx + 1
+
+    def preprocess_seqs(self, seqs: list[str], seq_len: int):
+        """
+        Ordinally encodes, pads, and trims sequences to seq_len
+        """
+        seqs = super().preprocess_seqs(seqs)
+
+        def ord_encode(s):
+            arr = np.zeros((seq_len,), dtype="<U1")
+            trimmed = s[:seq_len]
+            arr[:len(trimmed)] = list(trimmed)
+            return self.lookup_table[arr.view(np.uint32)]
+        print("Preprocessing text sequences...")
+        result = [ord_encode(i) for i in tqdm(seqs)]
+        return np.stack(result)
 
     def create_model(self, res='low', seq_len=.9, dist_args=None, **kwargs):
         """
@@ -400,11 +427,13 @@ class SequencePipeline(Pipeline):
             self.model.summary()
 
     @classmethod
-    def low_res_model(cls, seq_len: int, compress_factor=1, depth=3, **kwargs):
+    def low_res_model(cls, seq_len: int, compress_factor=1,
+                      depth=3, embed_dim=8, float_type=torch.float64, **kwargs):
         """
         Basic dense neural network operating on top of learned embeddings for input sequences.
         """
-        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=8, max_len=seq_len)
+        builder = ModelBuilder((seq_len,), input_dtype=float_type)
+        builder.embedding(len(cls.VOCAB), embed_dim, 0)
         builder.transpose()
         builder.dense(seq_len // compress_factor, depth=1)
         builder.dense(seq_len // compress_factor, depth=depth - 1, residual=True)
@@ -413,11 +442,12 @@ class SequencePipeline(Pipeline):
 
     @classmethod
     def medium_res_model(cls, seq_len: int, compress_factor=4, conv_filters=16, conv_kernel_size=6,
-                         dense_depth=3, embed_dim=12, **kwargs):
+                         dense_depth=3, embed_dim=12, float_type=torch.float64, **kwargs):
         """
         Convolutional layer operating on 1/4 the length of input sequences.
         """
-        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=embed_dim, max_len=seq_len)
+        builder = ModelBuilder((seq_len,), input_dtype=float_type)
+        builder.embedding(len(cls.VOCAB), embed_dim, 0)
         builder.transpose()
         if dense_depth:
             builder.dense(seq_len, depth=1)
@@ -429,11 +459,13 @@ class SequencePipeline(Pipeline):
 
     @classmethod
     def high_res_model(cls, seq_len: int, compress_factor=4, conv_filters=32, conv_kernel_size=8,
-                       attn_heads=2, dense_depth=3, **kwargs):
+                       attn_heads=2, dense_depth=3, embed_dim=12, float_type=torch.float64,
+                       **kwargs):
         """
         Convolutional layer + attention block operating on 1/4 the length of input sequences.
         """
-        builder = ModelBuilder.text_input(cls.VOCAB, embed_dim=16, max_len=seq_len)
+        builder = ModelBuilder((seq_len,), input_dtype=float_type)
+        builder.embedding(len(cls.VOCAB), embed_dim, 0)
         builder.transpose()
         if dense_depth:
             builder.dense(seq_len, depth=1)
@@ -448,12 +480,12 @@ class SequencePipeline(Pipeline):
 
     @classmethod
     def ultra_res_model(cls, seq_len: int, compress_factor=1, conv_filters=64, conv_kernel_size=16,
-                        attn_heads=4, dense_depth=3, **kwargs):
+                        attn_heads=4, dense_depth=3, embed_dim=16, **kwargs):
         """
         Convolutional layer + attention block operating on full length of input sequences.
         """
         return cls.high_res_model(seq_len, compress_factor, conv_filters,
-                                  conv_kernel_size, attn_heads, dense_depth, **kwargs)
+                                  conv_kernel_size, attn_heads, dense_depth, embed_dim, **kwargs)
 
     def fit(self, repr_size=2, loss="corr_coef", embedding_loss=None, **kwargs):
         """

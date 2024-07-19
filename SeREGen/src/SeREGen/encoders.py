@@ -8,8 +8,6 @@ import functools
 
 import torch
 from torch import nn
-from torchtext.data.utils import get_tokenizer
-from torchtext.vocab import build_vocab_from_iterator
 from torchinfo import summary
 
 
@@ -159,47 +157,6 @@ class OneHotEncoding(LayerCommon):
         return encoded.to(self.config["float_type"])
 
 
-class TextVectorizer(LayerCommon):
-    """
-    Convert input text into ordinally encoded tokens, then vector embeddings.
-    """
-
-    def __init__(self, vocab: list[str], embed_dim: int, max_len: int, embeddings=True, **kwargs):
-        super().__init__(
-            vocab=str(vocab),
-            embed_dim=embed_dim,
-            max_len=max_len,
-            embeddings=embeddings,
-            **kwargs,
-        )
-        self.tokenizer = get_tokenizer(list)
-        self.vocab = build_vocab_from_iterator(vocab, specials=["<unk>", "<pad>"])
-        self.vocab.set_default_index(self.vocab["<unk>"])
-        self.embedding = nn.Embedding(len(self.vocab),
-                                      embed_dim,
-                                      padding_idx=self.vocab["<pad>"],
-                                      dtype=self.config["float_type"],
-                                      ) if embeddings else None
-
-    def forward(self, inputs):
-        if isinstance(inputs, str):
-            inputs = [inputs]
-        # Tokenize all inputss at once
-        tokens = [self.tokenizer(t) for t in inputs]
-        # Convert tokens to indices
-        indices = [torch.tensor([self.vocab[token] for token in t],
-                                dtype=torch.long) for t in tokens]
-        # Pad sequences
-        padded = nn.utils.rnn.pad_sequence(indices, batch_first=True, padding_value=self.pad_idx)
-        # Truncate to max_len if needed
-        if padded.size(1) > self.max_len:
-            padded = padded[:, : self.max_len]
-
-        if self.embedding is not None:
-            padded = self.embedding(padded)
-        return padded.to(self.config["float_type"])
-
-
 class Transpose(LayerCommon):
     """
     Transpose the input over given axes.
@@ -217,8 +174,7 @@ class ModelBuilder:
     Class that helps easily build encoders for a ComparativeEncoder model.
     """
 
-    def __init__(self, input_shape: tuple, input_dtype=torch.float64,
-                 float_type=torch.float64, is_text_input=False,):
+    def __init__(self, input_shape: tuple, input_dtype=torch.float64):
         """
         Create a new ModelBuilder object.
         @param input_shape: Shape of model input.
@@ -226,35 +182,9 @@ class ModelBuilder:
         on a single GPU.
         """
         self.input_shape = input_shape
-        self.input_dtype = input_dtype
-        self.float_ = float_type
-        self.is_text_input = is_text_input
+        self.float_ = input_dtype
         self.layers = nn.ModuleList()
         self.residual_size = 0
-
-    @classmethod
-    def text_input(cls, vocab: list[str], embed_dim: int, max_len: int, embeddings=True, **kwargs):
-        """
-        Factory function that returns a new ModelBuilder object which can receive text input. Adds a
-        TextVectorization and an Embedding layer to preprocess string input data. Split happens
-        along characters. Additional keyword arguments are passed to ModelBuilder constructor.
-
-        @param vocab: Vocabulary to adapt TextVectorization layer to. String of characters with no
-        duplicates.
-        @param embed_dim: Size of embeddings to generate for each character in sequence. If None or
-        not passed, defaults to one hot encoding of input sequences.
-        @param max_len: Length to trim and pad input sequences to.
-        @return ModelBuilder: Newly created object.
-        """
-        obj = cls((1,), input_dtype=torch.long, is_text_input=True, **kwargs)
-        obj.text_vectorization(vocab, embed_dim, max_len, embeddings=embeddings)
-        return obj
-
-    def text_vectorization(self, *args, **kwargs):
-        """
-        Passes arguments directly to TextVectorizer module.
-        """
-        self.layers.append(TextVectorizer(*args, **kwargs))
 
     def one_hot_encoding(self, depth: int, **kwargs):
         """
@@ -287,7 +217,7 @@ class ModelBuilder:
         """
         model = nn.Sequential(*self.layers)
         return summary(model, input_size=(1, *self.input_shape),
-                       dtypes=[self.input_dtype], **kwargs,)
+                       dtypes=[self.float_], **kwargs,)
 
     def shape(self) -> tuple:
         """
@@ -326,7 +256,7 @@ class ModelBuilder:
         # Create properties dict
         properties = {
             "input_shape": self.input_shape,
-            "input_dtype": self.input_dtype,
+            "input_dtype": self.float_,
             "repr_size": repr_size if repr_size else self.shape()[-1],
             "depth": len(self.layers),
             "embed_dist": embed_space,
@@ -456,7 +386,7 @@ class ModelBuilder:
 
         # Save the model
         torch.save({"model": nn.Sequential(*self.layers),
-                   "input_shape": self.input_shape, "input_dtype": self.input_dtype}, path)
+                   "input_shape": self.input_shape, "input_dtype": self.float_}, path)
 
     @staticmethod
     def load_model(path: str):

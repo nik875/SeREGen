@@ -279,6 +279,8 @@ class ComparativeEncoder:
 
         def to_torch_tensor(data, dtype):
             if isinstance(data, np.ndarray):
+                if dtype == str:
+                    data = data.to()
                 return torch.from_numpy(data).to(dtype)
             if isinstance(data, torch.Tensor):
                 return data.to(dtype)
