@@ -182,6 +182,7 @@ class ModelBuilder:
         on a single GPU.
         """
         self.input_shape = input_shape
+        self.input_dtype = input_dtype
         self.float_ = input_dtype
         self.layers = nn.ModuleList()
         self.residual_size = 0
@@ -202,6 +203,7 @@ class ModelBuilder:
         @param output_dim: Size of encoding for each character in the sequences.
         @param padding_idx: Index of padding token. Defaults to None.
         """
+        self.input_dtype = torch.long
         self.layers.append(
             nn.Embedding(
                 input_dim,
@@ -217,7 +219,7 @@ class ModelBuilder:
         """
         model = nn.Sequential(*self.layers)
         return summary(model, input_size=(1, *self.input_shape),
-                       dtypes=[self.float_], **kwargs,)
+                       dtypes=[self.input_dtype], **kwargs,)
 
     def shape(self) -> tuple:
         """
@@ -237,14 +239,12 @@ class ModelBuilder:
             # Avoid putting points on the very edge of the poincare ball
             norm_to = 1 - 1e-5 if embed_space == "hyperbolic" else 1
             self.flatten()
-            # self.dense(repr_size, activation=None)
             self.layers.append(Linear(self.shape()[-1],
                                       repr_size,
                                       activation=None,
                                       norm_type=norm_type,
                                       norm_to=norm_to,
-                                      ))
-            # self.layers.append(LayerCommon(norm_type=norm_type, norm_to=norm_to))
+                                      float_type=self.float_))
         if embed_space == "hyperbolic" and norm_type not in [
                 "clip", "soft_clip", "scale_down", "l2", ]:
             print("WARN: Empty/invalid norm_type, compiling hyperbolic model without " +
@@ -325,8 +325,7 @@ class ModelBuilder:
                                       output_size,
                                       activation=activation,
                                       residual=residual,
-                                      float_type=self.float_,
-                                      ))
+                                      float_type=self.float_))
             if 1 < len(self.shape()) < 4:
                 self.batch_norm(self.shape()[-2])
 
@@ -353,8 +352,7 @@ class ModelBuilder:
                 filters,
                 kernel_size,
                 float_type=self.float_,
-                residual=residual,
-            ))
+                residual=residual))
 
     def attention(self, num_heads: int, output_size: int, residual=False):
         """

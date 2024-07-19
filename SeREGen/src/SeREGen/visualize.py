@@ -100,3 +100,22 @@ def reprs_by_label(reprs: np.ndarray, lbls: np.ndarray, title: str,
     if savepath:  # Save file if requested
         plt.savefig(savepath)
     plt.show()  # Show plot
+
+
+def cartesian_to_polar(reprs):
+    norms_remaining = np.flip(np.cumsum(np.flip(reprs**2, axis=1), axis=1), axis=1)
+    norms_remaining = np.sqrt(norms_remaining[:, :-1])
+    return np.arccos(reprs[:, :-1] / norms_remaining)
+
+
+def reprs_by_theta_unlabelled(reprs, *args, **kwargs):
+    angles = cartesian_to_polar(reprs)
+    repr_scatterplot(angles, *args, **kwargs)
+
+
+def reprs_by_theta_labelled(reprs, lbls, *args, **kwargs):
+    angles = cartesian_to_polar(reprs)
+    if isinstance(lbls, Dataset):
+        reprs_by_ds_label(angles, lbls, *args, **kwargs)
+    else:
+        reprs_by_label(angles, lbls, *args, **kwargs)

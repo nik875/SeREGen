@@ -163,25 +163,6 @@ class CustomLosses:
         r2 = r**2 * (r / (torch.abs(r) + 1e-8))
         return 1 - r2
 
-    @staticmethod
-    def avoid_hypersphere(encodings_a, encodings_b, encoding_loss_alpha=.001):
-        """
-        Incentivize against encodings falling on a hypersphere.
-        """
-        encodings = torch.cat([encodings_a, encodings_b], dim=0)
-        norms = torch.norm(encodings, p=2, dim=1)
-        avg_norm = torch.mean(norms)
-        errors = torch.sum(torch.abs(norms - avg_norm) ** .5)
-        return encoding_loss_alpha / torch.clamp_min(errors, 1e-7)
-
-    @staticmethod
-    def euclidean_dist(encodings_a, encodings_b, encoding_loss_alpha=.1):
-        """
-        Incentivize model to maximize euclidean distances between embeddings
-        """
-        euclidean_dists = torch.norm(encodings_a - encodings_b, p=2, dim=1)
-        return encoding_loss_alpha / torch.median(euclidean_dists)
-
 
 class ComparativeEncoder:
     """
@@ -202,6 +183,7 @@ class ComparativeEncoder:
         output_dtype=torch.float64,
         properties=None,
         random_seed=None,
+        force_dtype=False
     ):
         self.properties = properties or {}
         if repr_size is not None:
@@ -215,8 +197,10 @@ class ComparativeEncoder:
         self.properties["output_dtype"] = output_dtype
         self.properties["device"] = device or self.get_device()
         self.properties["seed"] = random_seed
-        self.encoder = encoder.to(self.properties["input_dtype"]).to(self.properties["device"])
-        self.model = self.create_model()
+        if force_dtype:
+            encoder = encoder.to(self.properties["output_dtype"])
+        self.encoder = encoder.to(self.properties["device"])
+        self.model = self.create_model(force_dtype)
         if "dist" not in self.properties:
             if not isinstance(dist, Distance):
                 raise ValueError(f"Argument 'dist' should be type Distance, received {type(dist)}")
@@ -228,12 +212,16 @@ class ComparativeEncoder:
         self.rng = np.random.default_rng(seed=random_seed)
         self.history = {}
 
-    def create_model(self):
-        return ComparativeLayer(
+    def create_model(self, force_dtype=False):
+        model = ComparativeLayer(
             self.encoder,
             self.properties["embed_dist"],
             self.properties["repr_size"],
-        ).to(self.properties["input_dtype"])
+        )
+        if force_dtype:
+            model = model.to(self.properties["output_dtype"])
+        model = model.to(self.properties["device"])
+        return model
 
     @classmethod
     def from_model_builder(
@@ -303,8 +291,8 @@ class ComparativeEncoder:
         return torch.utils.data.DataLoader(
             dataset, batch_size=self.properties["batch_size"], shuffle=shuffle)
 
-    def train_step(self, x, y, loss="corr_coef", lr=.001, encoding_loss=None,
-                   suppress_grad_warn=None, clip_grad=True, **encoding_loss_args) -> dict:
+    def train_step(self, x, y, loss="corr_coef", lr=.001,
+                   suppress_grad_warn=None, clip_grad=True) -> dict:
         """
         Abstract single epoch of training.
         """
@@ -319,11 +307,6 @@ class ComparativeEncoder:
                 if isinstance(loss, str) and loss != '':
                     raise ValueError(f"Unknown loss string: {loss}")
                 loss_fn = loss
-        match encoding_loss:
-            case "avoid_hypersphere":
-                encoding_loss = CustomLosses.avoid_hypersphere
-            case "euclidean_dist":
-                encoding_loss = CustomLosses.euclidean_dist
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
         suppress_grad_warn = suppress_grad_warn or []
@@ -342,18 +325,17 @@ class ComparativeEncoder:
             optimizer.zero_grad()
 
             # Forward pass
-            outputs, *encodings = self.model(b_x1, b_x2)
+            outputs, *_ = self.model(b_x1, b_x2)
 
             # Compute loss
             loss = loss_fn(outputs, b_y)
-            if encoding_loss:
-                loss += encoding_loss(*encodings, **encoding_loss_args)
 
-            if math.isnan(loss.item()):
+            if math.isnan(loss):
                 if "nan" in suppress_grad_warn:
+                    print("WARN: nan loss")
                     continue
-                self._print("Diverging to nan")
-                return {"loss": math.nan}
+                print("ERR: nan loss")
+                return {"loss": math.nan}  # Return nan to stop training at higher level
 
             loss.backward()
 
@@ -363,7 +345,9 @@ class ComparativeEncoder:
             errs = check_gradients(self.model, suppress=suppress_grad_warn)
             if errs["nan"]:
                 if "nan" in suppress_grad_warn:
+                    print("WARN: nan gradient")
                     continue
+                print("ERR: nan gradient")
                 return {"loss": math.nan}  # Return nan to stop training at higher level
 
             optimizer.step()
@@ -523,7 +507,7 @@ class ComparativeEncoder:
 
     def comparative_model_summary(self, _model=None):
         model = _model or self.model
-        return summary(model.to(self.properties["input_dtype"]), input_shape=(
+        return summary(model, input_shape=(
             1, *self.properties["input_shape"]), dtypes=[self.properties["input_dtype"]])
 
     def summary(self):

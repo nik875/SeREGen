@@ -91,14 +91,14 @@ class Pipeline:
         if self.preproc_reprs is None:
             raise ValueError('Fit must be called before transform!')
 
-    def transform(self, seqs: list, batch_size: int) -> list:
+    def transform(self, seqs: list) -> list:
         """
         Transform an array of string sequences to learned representations.
         @param seqs: List of string sequences to transform.
         @return list: Sequence representations.
         """
         self._fit_called_check()
-        return self.model.transform(self.preprocess_seqs(seqs), batch_size)
+        return self.model.transform(self.preprocess_seqs(seqs))
 
     def preprocess_dataset(self, **kwargs) -> np.ndarray:
         """
@@ -187,7 +187,7 @@ class Pipeline:
 
     def save(self, path):
         _create_save_directory(path)
-        self.model.save(path, "model")
+        self.model.save(os.path.join(path, "model"))
         _save_object(self.preproc_reprs, path, "preproc_reprs.pkl")
         _save_object(self.reprs, path, "reprs.pkl")
         _save_object(self.silence, path, "silence.pkl")
@@ -293,7 +293,7 @@ class KMerCountsPipeline(Pipeline):
             return self.dataset['seqs'].to_numpy()
         return self.dataset['seqs'].to_numpy()
 
-    def fit(self, preproc_args=None, repr_size=2, loss="corr_coef", embedding_loss=None, **kwargs):
+    def fit(self, preproc_args=None, repr_size=2, loss="r2", **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -305,18 +305,11 @@ class KMerCountsPipeline(Pipeline):
         unique_inds = super().fit(**(preproc_args or {}))
         distance_on = self._get_distance_on(update_dist=True)
 
-        if not embedding_loss and 1 < repr_size < 4:
-            if loss == "corr_coef":
-                embedding_loss = "euclidean_dist"
-            elif loss == "mse":
-                embedding_loss = "avoid_hypersphere"
-
         self.model.fit(
             self.preproc_reprs[unique_inds],
             distance_on=distance_on[unique_inds],
             loss=loss,
             repr_size=repr_size,
-            embedding_loss=embedding_loss,
             **kwargs)
         self.transform_dataset()
 
@@ -352,32 +345,41 @@ class SequencePipeline(Pipeline):
     """
     VOCAB = []  # MUST be defined by subclass; chr(0) is reserved
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, seq_len=.9, **kwargs):
         super().__init__(*args, **kwargs)
+        self.seq_len = seq_len
+
         alphabet = np.array(self.VOCAB)
         self.alphabet_pattern = re.compile(f'[^{"".join(alphabet)}]')
-
         # Make a lookup table with an entry for every possible data byte
         self.lookup_table = np.zeros(256, dtype=np.uint32)
         for idx, val in enumerate(self.VOCAB):
             self.lookup_table[ord(val)] = idx + 1
 
-    def preprocess_seqs(self, seqs: list[str], seq_len: int):
+    def load_dataset(self, *args, **kwargs):
+        super().load_dataset(*args, **kwargs)
+        if self.seq_len is not None and self.seq_len < 1:
+            target_zscore = st.norm.ppf(self.seq_len)
+            lengths = self.dataset['seqs'].apply(len)
+            mean = np.mean(lengths)
+            std = np.std(lengths)
+            self.seq_len = int(target_zscore * std + mean)
+
+    def preprocess_seqs(self, seqs: list[str]):
         """
         Ordinally encodes, pads, and trims sequences to seq_len
         """
         seqs = super().preprocess_seqs(seqs)
 
         def ord_encode(s):
-            arr = np.zeros((seq_len,), dtype="<U1")
-            trimmed = s[:seq_len]
+            arr = np.zeros((self.seq_len,), dtype="<U1")
+            trimmed = s[:self.seq_len]
             arr[:len(trimmed)] = list(trimmed)
             return self.lookup_table[arr.view(np.uint32)]
-        print("Preprocessing text sequences...")
         result = [ord_encode(i) for i in tqdm(seqs)]
         return np.stack(result)
 
-    def create_model(self, res='low', seq_len=.9, dist_args=None, **kwargs):
+    def create_model(self, res='low', repr_size=2, dist_args=None, **kwargs):
         """
         Create a model for the Pipeline.
         @param res: Resolution of the model's encoding output. Available options are:
@@ -395,30 +397,38 @@ class SequencePipeline(Pipeline):
         @param dist_args: Arguments for distance metric (jobs, chunksize)
         @param **kwargs: Everything else passed to ComparativeEncoder.from_model_builder
         """
-        if (seq_len is None or seq_len < 1) and self.dataset is None:
-            raise ValueError('Dataset must be loaded before autodetection of sequence length!')
-        if seq_len is not None and seq_len < 1:
-            target_zscore = st.norm.ppf(seq_len)
-            lengths = self.dataset['seqs'].apply(len)
-            mean = np.mean(lengths)
-            std = np.std(lengths)
-            seq_len = int(target_zscore * std + mean)
 
         dist_args = dist_args or {}
         dist = EditDistance(silence=self.silence, **dist_args)
 
         if res == 'low':
-            self.model = self.low_res_model(seq_len, dist=dist,
-                                            random_seed=self.rng.integers(2**32), **kwargs)
+            self.model = self.low_res_model(
+                self.seq_len,
+                dist=dist,
+                random_seed=self.rng.integers(2**32),
+                repr_size=repr_size,
+                **kwargs)
         elif res == 'medium':
-            self.model = self.medium_res_model(seq_len, dist=dist,
-                                               random_seed=self.rng.integers(2**32), **kwargs)
+            self.model = self.medium_res_model(
+                self.seq_len,
+                dist=dist,
+                random_seed=self.rng.integers(2**32),
+                repr_size=repr_size,
+                **kwargs)
         elif res == 'high':
-            self.model = self.high_res_model(seq_len, dist=dist,
-                                             random_seed=self.rng.integers(2**32), **kwargs)
+            self.model = self.high_res_model(
+                self.seq_len,
+                dist=dist,
+                random_seed=self.rng.integers(2**32),
+                repr_size=repr_size,
+                **kwargs)
         elif res == 'ultra':
-            self.model = self.ultra_res_model(seq_len, dist=dist,
-                                              random_seed=self.rng.integers(2**32), **kwargs)
+            self.model = self.ultra_res_model(
+                self.seq_len,
+                dist=dist,
+                random_seed=self.rng.integers(2**32),
+                repr_size=repr_size,
+                **kwargs)
         else:
             raise ValueError(
                 'Invalid argument: res must be one of "low", "medium", "high", "ultra"')
@@ -487,7 +497,7 @@ class SequencePipeline(Pipeline):
         return cls.high_res_model(seq_len, compress_factor, conv_filters,
                                   conv_kernel_size, attn_heads, dense_depth, embed_dim, **kwargs)
 
-    def fit(self, repr_size=2, loss="corr_coef", embedding_loss=None, **kwargs):
+    def fit(self, preproc_args=None, loss="r2", suppress_grad_warn=None, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -495,20 +505,27 @@ class SequencePipeline(Pipeline):
         if not self.model:
             print('Warning: using default low-res model...')
             self.create_model()
-        unique_inds = super().fit()
+        unique_inds = super().fit(**(preproc_args or {}))
 
-        if not embedding_loss and 1 < repr_size < 4:
-            if loss == "corr_coef":
-                embedding_loss = "euclidean_dist"
-            elif loss == "mse":
-                embedding_loss = "avoid_hypersphere"
+        suppress_grad_warn = suppress_grad_warn or []
+        if loss == "corr_coef" and "vanishing" not in suppress_grad_warn:
+            suppress_grad_warn.append("vanishing")
 
         self.model.fit(
             self.preproc_reprs[unique_inds],
-            repr_size=repr_size,
             loss=loss,
-            embedding_loss=embedding_loss,
+            suppress_grad_warn=suppress_grad_warn,
             **kwargs)
+        self.transform_dataset()
+
+    def evaluate(self, **kwargs):
+        """
+        Evaluate the performance of the model by seeing how well we can predict true sequence
+        dissimilarity from encoding distances.
+        @param sample_size: Number of sequences to use for evaluation. All in dataset by default.
+        @return np.ndarray, np.ndarray: predicted distances, true distances
+        """
+        return super().evaluate(self.preproc_reprs, self.preproc_reprs, **kwargs)
 
 
 class DNASequencePipeline(SequencePipeline):
@@ -546,17 +563,6 @@ class HomologousSequencePipeline(SequencePipeline):
             print('Warning: default converter being used...')
             self.create_converter()
         return self.converter.transform(seqs)
-
-    def evaluate(self, **kwargs):
-        """
-        Evaluate the performance of the model by seeing how well we can predict true sequence
-        dissimilarity from encoding distances.
-        @param sample_size: Number of sequences to use for evaluation. All in dataset by default.
-        @return np.ndarray, np.ndarray: predicted distances, true distances
-        """
-        _, unique_inds = np.unique(self.preproc_reprs, return_index=True)
-        return super().evaluate(self.preproc_reprs[unique_inds], self.preproc_reprs[unique_inds],
-                                **kwargs)
 
     def save(self, path: str):
         super().save(path)
