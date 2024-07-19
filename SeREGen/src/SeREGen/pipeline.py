@@ -195,13 +195,14 @@ class Pipeline:
 
     @classmethod
     def load(cls, path):
-        return Pipeline.__init__(
-            cls.__new__(),
-            model=ComparativeEncoder.load(os.path.join(path, "model")),
-            preproc_reprs=_load_object(path, "preproc_reprs.pkl"),
-            reprs=_load_object(path, "reprs.pkl"),
-            silence=_load_object(path, "silence.pkl"),
-            random_seed=_load_object(path, "random_seed.pkl"))
+        obj = cls.__new__(cls)
+        Pipeline.__init__(obj,
+                          model=ComparativeEncoder.load(os.path.join(path, "model")),
+                          preproc_reprs=_load_object(path, "preproc_reprs.pkl"),
+                          reprs=_load_object(path, "reprs.pkl"),
+                          silence=_load_object(path, "silence.pkl"),
+                          random_seed=_load_object(path, "random_seed.pkl"))
+        return obj
 
 
 class KMerCountsPipeline(Pipeline):
@@ -214,8 +215,9 @@ class KMerCountsPipeline(Pipeline):
         'edit': EditDistance
     }
 
-    def __init__(self, counter=None, compressor=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, counter=None, compressor=None, _super_init=True, **kwargs):
+        if _super_init:
+            super().__init__(**kwargs)
         self.counter = counter
         self.K_ = self.counter.k if self.counter else None
         self.compressor = compressor
@@ -333,9 +335,10 @@ class KMerCountsPipeline(Pipeline):
     @classmethod
     def load(cls, path: str):
         obj = super().load(path)
-        obj.counter = _load_object(path, "counter.pkl")
-        if "compressor" in os.listdir(path):
-            obj.compressor = KMerCountCompressor.load(os.path.join(path, "compressor"))
+        cls.__init__(obj,
+                     _load_object(path, "counter.pkl"),
+                     KMerCountCompressor.load(os.path.join(path, "compressor")),
+                     super_init=False)
         return obj
 
 
@@ -345,8 +348,9 @@ class SequencePipeline(Pipeline):
     """
     VOCAB = []  # MUST be defined by subclass; chr(0) is reserved
 
-    def __init__(self, *args, seq_len=.9, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, seq_len=.9, _super_init=True, **kwargs):
+        if _super_init:
+            super().__init__(*args, **kwargs)
         self.seq_len = seq_len
 
         alphabet = np.array(self.VOCAB)
@@ -358,7 +362,7 @@ class SequencePipeline(Pipeline):
 
     def load_dataset(self, *args, **kwargs):
         super().load_dataset(*args, **kwargs)
-        if self.seq_len is not None and self.seq_len < 1:
+        if self.seq_len < 1:
             target_zscore = st.norm.ppf(self.seq_len)
             lengths = self.dataset['seqs'].apply(len)
             mean = np.mean(lengths)
@@ -437,13 +441,22 @@ class SequencePipeline(Pipeline):
             self.model.summary()
 
     @classmethod
-    def low_res_model(cls, seq_len: int, compress_factor=1,
-                      depth=3, embed_dim=8, float_type=torch.float64, **kwargs):
+    def _init_builder(cls, seq_len, float_type, embed_dim, use_embedding_layer):
+        builder = ModelBuilder((seq_len,), input_dtype=float_type)
+        if use_embedding_layer:
+            builder.embedding(len(cls.VOCAB), embed_dim, 0)
+        else:
+            builder.one_hot_encoding(len(cls.VOCAB))
+            builder.dense(embed_dim)
+        return builder
+
+    @classmethod
+    def low_res_model(cls, seq_len: int, compress_factor=1, depth=3, embed_dim=8,
+                      float_type=torch.float64, use_embedding_layer=True, **kwargs):
         """
         Basic dense neural network operating on top of learned embeddings for input sequences.
         """
-        builder = ModelBuilder((seq_len,), input_dtype=float_type)
-        builder.embedding(len(cls.VOCAB), embed_dim, 0)
+        builder = cls._init_builder(seq_len, float_type, embed_dim, use_embedding_layer)
         builder.transpose()
         builder.dense(seq_len // compress_factor, depth=1)
         builder.dense(seq_len // compress_factor, depth=depth - 1, residual=True)
@@ -452,12 +465,12 @@ class SequencePipeline(Pipeline):
 
     @classmethod
     def medium_res_model(cls, seq_len: int, compress_factor=4, conv_filters=16, conv_kernel_size=6,
-                         dense_depth=3, embed_dim=12, float_type=torch.float64, **kwargs):
+                         dense_depth=3, embed_dim=12, float_type=torch.float64,
+                         use_embedding_layer=True, **kwargs):
         """
         Convolutional layer operating on 1/4 the length of input sequences.
         """
-        builder = ModelBuilder((seq_len,), input_dtype=float_type)
-        builder.embedding(len(cls.VOCAB), embed_dim, 0)
+        builder = cls._init_builder(seq_len, float_type, embed_dim, use_embedding_layer)
         builder.transpose()
         if dense_depth:
             builder.dense(seq_len, depth=1)
@@ -470,12 +483,11 @@ class SequencePipeline(Pipeline):
     @classmethod
     def high_res_model(cls, seq_len: int, compress_factor=4, conv_filters=32, conv_kernel_size=8,
                        attn_heads=2, dense_depth=3, embed_dim=12, float_type=torch.float64,
-                       **kwargs):
+                       use_embedding_layer=True, **kwargs):
         """
         Convolutional layer + attention block operating on 1/4 the length of input sequences.
         """
-        builder = ModelBuilder((seq_len,), input_dtype=float_type)
-        builder.embedding(len(cls.VOCAB), embed_dim, 0)
+        builder = cls._init_builder(seq_len, float_type, embed_dim, use_embedding_layer)
         builder.transpose()
         if dense_depth:
             builder.dense(seq_len, depth=1)
@@ -527,6 +539,16 @@ class SequencePipeline(Pipeline):
         """
         return super().evaluate(self.preproc_reprs, self.preproc_reprs, **kwargs)
 
+    def save(self, path):
+        super().save(path)
+        _save_object(self.seq_len, path, "seq_len.pkl")
+
+    @classmethod
+    def load(cls, path):
+        obj = super().load(path)
+        cls.__init__(obj, seq_len=_load_object(path, "seq_len.pkl"), _super_init=False)
+        return obj
+
 
 class DNASequencePipeline(SequencePipeline):
     """
@@ -548,8 +570,9 @@ class HomologousSequencePipeline(SequencePipeline):
     """
     VOCAB = np.unique(Nucleotide_AA.AA_LOOKUP)
 
-    def __init__(self, converter=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, converter=None, _super_init=True, **kwargs):
+        if _super_init:
+            super().__init__(**kwargs)
         self.converter = converter
 
     def create_converter(self, *args, **kwargs):
@@ -571,5 +594,5 @@ class HomologousSequencePipeline(SequencePipeline):
     @classmethod
     def load(cls, path: str):
         obj = super().load(path)
-        obj.converter = _load_object(path, "converter.pkl")
+        cls.__init__(obj, _load_object(path, "converter.pkl"), _super_init=False)
         return obj

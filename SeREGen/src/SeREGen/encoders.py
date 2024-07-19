@@ -45,10 +45,11 @@ class LayerCommon(nn.Module):
             self.norm_fn = self.l2_norm
             self.radius = nn.Parameter(torch.Tensor([1e-2]), requires_grad=False)
         else:
-            self.norm_fn = lambda x: x  # Do nothing
+            self.norm_fn = self.empty_layer
 
-        if self.config["residual"]:
-            self.forward = self.forward_with_residual(self.forward)
+    @staticmethod
+    def empty_layer(x):
+        return x
 
     def clip_norm(self, x):
         return torch.clamp(x, min=-self.config["norm_to"], max=self.config["norm_to"])
@@ -66,15 +67,8 @@ class LayerCommon(nn.Module):
     def dynamic_norm_scaling(self, x):
         return x / torch.norm(x, dim=-1).max()
 
-    def forward_with_residual(self, forward_fn):
-        @functools.wraps(forward_fn)
-        def wrapper(inputs):
-            return forward_fn(inputs) + inputs
-
-        return wrapper
-
-    def forward(self, inputs):  # pylint: disable=method-hidden
-        return self.norm_fn(inputs)
+    def forward(self, inputs):
+        return self.norm_fn(inputs) + inputs * int(self.config["residual"])
 
     def __repr__(self):
         kwargs = ", ".join(f"{k}={v}" for k, v in self.config.items())

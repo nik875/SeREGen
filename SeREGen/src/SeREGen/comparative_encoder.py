@@ -197,10 +197,11 @@ class ComparativeEncoder:
         self.properties["output_dtype"] = output_dtype
         self.properties["device"] = device or self.get_device()
         self.properties["seed"] = random_seed
-        if force_dtype:
+        self.properties["force_dtype"] = force_dtype
+        if self.properties["force_dtype"]:
             encoder = encoder.to(self.properties["output_dtype"])
         self.encoder = encoder.to(self.properties["device"])
-        self.model = self.create_model(force_dtype)
+        self.model = self.create_model()
         if "dist" not in self.properties:
             if not isinstance(dist, Distance):
                 raise ValueError(f"Argument 'dist' should be type Distance, received {type(dist)}")
@@ -212,13 +213,13 @@ class ComparativeEncoder:
         self.rng = np.random.default_rng(seed=random_seed)
         self.history = {}
 
-    def create_model(self, force_dtype=False):
+    def create_model(self):
         model = ComparativeLayer(
             self.encoder,
             self.properties["embed_dist"],
             self.properties["repr_size"],
         )
-        if force_dtype:
+        if self.properties["force_dtype"]:
             model = model.to(self.properties["output_dtype"])
         model = model.to(self.properties["device"])
         return model
