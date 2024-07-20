@@ -8,7 +8,7 @@ from .dataset_builder import Dataset
 
 
 def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='.', figsize=(8, 6),
-                     savepath=None, scale=None):
+                     savepath=None, scale=None, max_points=None, random_seed=None):
     """
     Create a simple scatterplot of sequence representations.
     Suggested alpha for SILVA dataset representations: .05
@@ -19,6 +19,9 @@ def repr_scatterplot(reprs: np.ndarray, title=None, alpha=.1, marker='.', figsiz
     @param figsize: size of figure to generate
     @param savepath: path to save plot to.
     """
+    if max_points is not None:
+        rng = np.random.default_rng(seed=random_seed)
+        reprs = reprs[rng.integers(max_points)]
     x, y = np.array(reprs).T
     plt.figure(figsize=figsize)
     plt.scatter(x, y, alpha=alpha, marker=marker)

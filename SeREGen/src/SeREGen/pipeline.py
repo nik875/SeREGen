@@ -156,20 +156,20 @@ class Pipeline:
         """
         # TODO: distance decoding back to original via linear regression
         self._reprs_check()
-        if self.model.embed_dist == 'euclidean':
+        if self.model.properties["embed_dist"] == 'euclidean':
             if self.index is None:  # If index hasn't been created, create it.
                 if not self.silence:
                     print('Creating search index...')
                 self.index = BallTree(self.reprs)
-            query_enc = self.transform([query], 1)
+            query_enc = self.transform([query])
             dists, ind = self.index.query(query_enc, k=n_neighbors)
             matches = self.dataset.iloc[ind[0]]
             # return self.decoder.transform(dists[0], **kwargs).flatten(), matches
             return matches
-        if self.model.embed_dist == 'hyperbolic':  # TODO: BALL TREE
-            query_enc = self.transform([query], 1)
-            x = np.repeat(query_enc, len(self.reprs), axis=0)
-            dists = self.model.transform(x, self.reprs)
+        if self.model.properties["embed_dist"] == 'hyperbolic':  # TODO: BALL TREE
+            query_preproc = self.preprocess_seqs([query])
+            x = np.repeat(query_preproc, len(self.reprs), axis=0)
+            dists = self.model.transform(x, self.preproc_reprs)  # TODO: avoid regenerating embeds
             s = np.argsort(dists)[:n_neighbors]
             # return self.decoder.transform(dists, **kwargs)[s], self.dataset.iloc[s]
             return self.dataset.iloc[s]
@@ -258,7 +258,7 @@ class KMerCountsPipeline(Pipeline):
         print('Fitting compressor...')
         self.compressor.fit(sample)
 
-    def create_model(self, depth=3, dist='cosine', dist_args=None,
+    def create_model(self, depth=3, dist='cosine', dist_args=None, repr_size=2,
                      float_type=torch.float64, **kwargs):
         """
         Create a Model for this KMerCountsPipeline. Uses all available GPUs.
@@ -277,6 +277,7 @@ class KMerCountsPipeline(Pipeline):
         self.model = ComparativeEncoder.from_model_builder(builder, dist=dist,
                                                            silence=self.silence,
                                                            random_seed=self.rng.integers(2**32),
+                                                           repr_size=repr_size,
                                                            **kwargs)
         if not self.silence:
             self.model.summary()
@@ -284,7 +285,7 @@ class KMerCountsPipeline(Pipeline):
     def preprocess_seqs(self, seqs: list[str], **kwargs) -> np.ndarray:
         if self.compressor is not None:
             return self.compressor.transform(seqs, **kwargs)
-        return self.counter.transform(seqs, **kwargs)
+        return self.counter.kmer_counts(seqs, **kwargs)
 
     def _get_distance_on(self, update_dist=False):
         if isinstance(self.model.properties["dist"], (Euclidean, Cosine)):
@@ -295,7 +296,7 @@ class KMerCountsPipeline(Pipeline):
             return self.dataset['seqs'].to_numpy()
         return self.dataset['seqs'].to_numpy()
 
-    def fit(self, preproc_args=None, repr_size=2, loss="r2", **kwargs):
+    def fit(self, preproc_args=None, loss="r2", suppress_grad_warn=None, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -307,11 +308,15 @@ class KMerCountsPipeline(Pipeline):
         unique_inds = super().fit(**(preproc_args or {}))
         distance_on = self._get_distance_on(update_dist=True)
 
+        suppress_grad_warn = suppress_grad_warn or []
+        if loss in ["r2", "corr_coef"] and "vanishing" not in suppress_grad_warn:
+            suppress_grad_warn.append("vanishing")
+
         self.model.fit(
             self.preproc_reprs[unique_inds],
             distance_on=distance_on[unique_inds],
             loss=loss,
-            repr_size=repr_size,
+            suppress_grad_warn=suppress_grad_warn,
             **kwargs)
         self.transform_dataset()
 
@@ -322,9 +327,8 @@ class KMerCountsPipeline(Pipeline):
         @param sample_size: Number of sequences to use for evaluation. All in dataset by default.
         @return np.ndarray, np.ndarray: predicted distances, true distances
         """
-        _, unique_inds = np.unique(self.preproc_reprs, return_index=True)
         distance_on = self._get_distance_on()
-        return super().evaluate(self.preproc_reprs[unique_inds], distance_on[unique_inds], **kwargs)
+        return super().evaluate(self.preproc_reprs, distance_on, **kwargs)
 
     def save(self, path: str):
         super().save(path)
@@ -335,10 +339,12 @@ class KMerCountsPipeline(Pipeline):
     @classmethod
     def load(cls, path: str):
         obj = super().load(path)
+        compressor = KMerCountCompressor.load(os.path.join(
+            path, "compressor")) if "compressor" in os.listdir(path) else None
         cls.__init__(obj,
                      _load_object(path, "counter.pkl"),
-                     KMerCountCompressor.load(os.path.join(path, "compressor")),
-                     super_init=False)
+                     compressor,
+                     _super_init=False)
         return obj
 
 
@@ -520,7 +526,7 @@ class SequencePipeline(Pipeline):
         unique_inds = super().fit(**(preproc_args or {}))
 
         suppress_grad_warn = suppress_grad_warn or []
-        if loss == "corr_coef" and "vanishing" not in suppress_grad_warn:
+        if loss in ["corr_coef", "r2"] and "vanishing" not in suppress_grad_warn:
             suppress_grad_warn.append("vanishing")
 
         self.model.fit(
