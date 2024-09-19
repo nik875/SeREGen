@@ -498,11 +498,12 @@ class SequencePipeline(Pipeline):
         if dense_depth:
             builder.dense(seq_len, depth=1)
             builder.dense(seq_len, depth=dense_depth - 1, residual=True)
-        builder.dense(seq_len // compress_factor)
+        builder.dense(seq_len // compress_factor, residual=True)
         builder.transpose()
         builder.conv1D(conv_filters, conv_kernel_size, residual=True)
-        builder.dense(seq_len // compress_factor * 4)
-        builder.reshape((*builder.shape()[:-2], builder.shape()[-1] // 4, 4))
+        builder.transpose()
+        builder.dense(seq_len // compress_factor, residual=True)
+        print(builder.summary())
         builder.attention(attn_heads, seq_len // compress_factor, residual=True)
         return ComparativeEncoder.from_model_builder(builder, **kwargs)
 

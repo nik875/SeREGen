@@ -3,7 +3,6 @@ Module to help build encoders for ComparativeEncoder. It is recommended to use M
 """
 
 import os
-import functools
 
 
 import torch
@@ -175,6 +174,7 @@ class ModelBuilder:
         @param input_dtype: Optional dtype for model input.
         on a single GPU.
         """
+        torch.set_default_dtype(input_dtype)
         self.input_shape = input_shape
         self.input_dtype = input_dtype
         self.float_ = input_dtype
@@ -362,7 +362,8 @@ class ModelBuilder:
                 self.shape()[1],
                 num_heads,
                 output_size,
-                residual=residual))
+                residual=residual,
+                float_type=self.float_))
 
     def save_model(self, path: str):
         """
