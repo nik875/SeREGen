@@ -296,7 +296,8 @@ class KMerCountsPipeline(Pipeline):
             return self.dataset['seqs'].to_numpy()
         return self.dataset['seqs'].to_numpy()
 
-    def fit(self, preproc_args=None, loss="r2", suppress_grad_warn=None, **kwargs):
+    def fit(self, preproc_args=None, loss="r2", suppress_grad_warn=None, scheduler="one_cycle",
+            epochs=None, **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -312,11 +313,19 @@ class KMerCountsPipeline(Pipeline):
         if loss in ["r2", "corr_coef"] and "vanishing" not in suppress_grad_warn:
             suppress_grad_warn.append("vanishing")
 
+        if epochs is None:
+            if scheduler == "one_cycle":
+                epochs = 1  # One cycle: train in single epoch
+            else:
+                epochs = 100  # Default for other schedulers
+
         self.model.fit(
             self.preproc_reprs[unique_inds],
             distance_on=distance_on[unique_inds],
             loss=loss,
             suppress_grad_warn=suppress_grad_warn,
+            scheduler=scheduler,
+            epochs=epochs,
             **kwargs)
         self.transform_dataset()
 
@@ -410,6 +419,10 @@ class SequencePipeline(Pipeline):
 
         dist_args = dist_args or {}
         dist = EditDistance(silence=self.silence, **dist_args)
+
+        if 'properties' not in kwargs:  # Add model resolution to properties dict
+            kwargs['properties'] = {}
+        kwargs['properties']['model_resolution'] = res
 
         if res == 'low':
             self.model = self.low_res_model(
@@ -516,7 +529,8 @@ class SequencePipeline(Pipeline):
         return cls.high_res_model(seq_len, compress_factor, conv_filters,
                                   conv_kernel_size, attn_heads, dense_depth, embed_dim, **kwargs)
 
-    def fit(self, preproc_args=None, loss="r2", suppress_grad_warn=None, **kwargs):
+    def fit(self, preproc_args=None, loss="r2", suppress_grad_warn=None, scheduler=None, epochs=None,
+            **kwargs):
         """
         Fit model to loaded dataset. Accepts keyword arguments for ComparativeEncoder.fit().
         Automatically calls create_model() with default arguments if not already called.
@@ -526,6 +540,21 @@ class SequencePipeline(Pipeline):
             self.create_model()
         unique_inds = super().fit(**(preproc_args or {}))
 
+        # Auto-select scheduler if none specified
+        if scheduler is None:
+            # Check model type by examining properties or structure
+            if hasattr(self.model, 'properties') and 'model_resolution' in self.model.properties:
+                if self.model.properties['model_resolution'] in ['high', 'ultra']:
+                    scheduler = "cosine_warm_restart"
+                else:
+                    scheduler = "one_cycle"
+            # Default to leaving as none if can't determine model type
+        if epochs is None:
+            if scheduler == "one_cycle":
+                epochs = 1  # One cycle: train in single epoch
+            else:
+                epochs = 100  # Default for other schedulers
+
         suppress_grad_warn = suppress_grad_warn or []
         if loss in ["corr_coef", "r2"] and "vanishing" not in suppress_grad_warn:
             suppress_grad_warn.append("vanishing")
@@ -534,6 +563,8 @@ class SequencePipeline(Pipeline):
             self.preproc_reprs[unique_inds],
             loss=loss,
             suppress_grad_warn=suppress_grad_warn,
+            scheduler=scheduler,
+            epochs=epochs,
             **kwargs)
         self.transform_dataset()
 

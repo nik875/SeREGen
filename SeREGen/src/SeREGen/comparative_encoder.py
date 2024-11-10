@@ -202,6 +202,7 @@ class ComparativeEncoder:
             encoder = encoder.to(self.properties["output_dtype"])
         self.encoder = encoder.to(self.properties["device"])
         self.model = self.create_model()
+        self.scheduler = None
         if "dist" not in self.properties:
             if not isinstance(dist, Distance):
                 raise ValueError(f"Argument 'dist' should be type Distance, received {type(dist)}")
@@ -292,7 +293,28 @@ class ComparativeEncoder:
         return torch.utils.data.DataLoader(
             dataset, batch_size=self.properties["batch_size"], shuffle=shuffle)
 
-    def train_step(self, x, y, loss="corr_coef", lr=.001,
+    def _configure_scheduler(self, optimizer, scheduler="one_cycle", num_steps=None):
+        """Configure the learning rate scheduler based on the specified type."""
+        if scheduler is None or scheduler == '':
+            return None
+        if isinstance(scheduler, torch.optim.lr_scheduler._LRScheduler):
+            return scheduler
+
+        if scheduler == "cosine_warm_restart":
+            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=num_steps // 3, T_mult=2
+            )
+        if scheduler == "one_cycle":
+            return torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=optimizer.param_groups[0]['lr'],
+                total_steps=num_steps,
+                pct_start=0.3,
+                anneal_strategy='cos'
+            )
+        raise ValueError(f"Unknown scheduler type: {scheduler}")
+
+    def train_step(self, x, y, loss="corr_coef", lr=.001, scheduler=None,
                    suppress_grad_warn=None, clip_grad=True) -> dict:
         """
         Abstract single epoch of training.
@@ -313,12 +335,18 @@ class ComparativeEncoder:
         suppress_grad_warn = suppress_grad_warn or []
         suppress_grad_warn = [i.lower() for i in suppress_grad_warn]
         dataloader = self.prepare_torch_dataset(x, y)
+
+        # Configure scheduler if needed
+        if self.scheduler is None and scheduler is not None:
+            self.scheduler = self._configure_scheduler(
+                optimizer, scheduler=scheduler, num_steps=len(dataloader))
+
         epoch_loss, n = 0, 0
         self.model = self.model.to(self.properties["device"])
         self.model.train()
+
         if not self.properties["silence"]:
             dataloader = tqdm(dataloader, total=len(dataloader), desc="Training model...")
-
         for b_x1, b_x2, b_y in dataloader:
             b_x1 = b_x1.to(self.properties["input_dtype"]).to(self.properties["device"])
             b_x2 = b_x2.to(self.properties["input_dtype"]).to(self.properties["device"])
@@ -352,6 +380,12 @@ class ComparativeEncoder:
                 return {"loss": math.nan}  # Return nan to stop training at higher level
 
             optimizer.step()
+
+            # Step scheduler if it exists and is batch-based
+            if self.scheduler is not None and isinstance(self.scheduler,
+                                                         torch.optim.lr_scheduler._LRScheduler):
+                self.scheduler.step()
+
             epoch_loss += loss.item() * b_x1.shape[0]
             n += b_x1.shape[0]
             running_loss = epoch_loss / n
